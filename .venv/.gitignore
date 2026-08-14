@@ -1,0 +1,22 @@
+# --- סביבה וירטואלית (venv) ---
+venv/
+.venv/
+
+# --- קבצי cache של Python ---
+__pycache__/
+*.py[cod]
+
+# --- כלי בדיקה ---
+.pytest_cache/
+.mypy_cache/
+
+# --- סודות ומפתחות ---
+.env
+*.key
+
+# --- הגדרות IDE (PyCharm) ---
+.idea/
+
+# --- קבצי מערכת הפעלה ---
+.DS_Store
+Thumbs.db
