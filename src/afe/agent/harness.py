@@ -104,7 +104,9 @@ class MaxTurnsExceededError(RuntimeError):
     agent loops — separate from the gateway chokepoint's kill switch (coming day 8/9).
     Neither mechanism relies on the other: this one stops the loop purely by counting
     turns, regardless of what the chokepoint would eventually decide about any given
-    request.
+    request. The check runs before client.messages.create() is called, so once the
+    ceiling is reached no further API call is ever made — execution isn't merely
+    blocked afterward.
     """
 
 
@@ -137,6 +139,12 @@ def run_agent(
     turns = 0
 
     while True:
+        if turns >= max_turns:
+            raise MaxTurnsExceededError(
+                f"Agent exceeded max_turns={max_turns} while running task: {task!r}. "
+                f"Tool calls made so far: {tool_calls!r}"
+            )
+
         response = client.messages.create(
             model=model,
             max_tokens=max_tokens,
@@ -155,11 +163,6 @@ def run_agent(
             break
 
         turns += 1
-        if turns > max_turns:
-            raise MaxTurnsExceededError(
-                f"Agent exceeded max_turns={max_turns} while running task: {task!r}. "
-                f"Tool calls made so far: {tool_calls!r}"
-            )
 
         # The agent's own account of what it's doing this turn, collected purely as
         # evidence per docs/concept.md §7 — NOT used by the chokepoint's decision
