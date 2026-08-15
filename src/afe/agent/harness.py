@@ -96,12 +96,25 @@ def execute_tool_call(tool_name: str, tool_input: dict[str, Any]) -> Any:
     return tool(**tool_input)
 
 
+class MaxTurnsExceededError(RuntimeError):
+    """
+    Raised when run_agent's tool-use loop exceeds max_turns.
+
+    A hard turn-count ceiling is a second, independent safety stop against runaway
+    agent loops — separate from the gateway chokepoint's kill switch (coming day 8/9).
+    Neither mechanism relies on the other: this one stops the loop purely by counting
+    turns, regardless of what the chokepoint would eventually decide about any given
+    request.
+    """
+
+
 def run_agent(
     system_prompt: str,
     task: str,
     *,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    max_turns: int = 10,
     client: anthropic.Anthropic | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -112,12 +125,16 @@ def run_agent(
     since this loop is only a usage demo; a later day wires the return value into
     demo/run_demo.py instead of printing.
 
+    `max_turns` caps the number of tool_use turns; exceeding it raises
+    MaxTurnsExceededError instead of looping forever — see that class's docstring.
+
     Returns the full sequence of tool calls made during the run, in order, as
-    {"name", "input", "result"} dicts.
+    {"name", "input", "result", "current_intent"} dicts.
     """
     client = client or anthropic.Anthropic()
     messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
     tool_calls: list[dict[str, Any]] = []
+    turns = 0
 
     while True:
         response = client.messages.create(
@@ -137,12 +154,35 @@ def run_agent(
                 print(f"Final answer:\n{final_text}")
             break
 
+        turns += 1
+        if turns > max_turns:
+            raise MaxTurnsExceededError(
+                f"Agent exceeded max_turns={max_turns} while running task: {task!r}. "
+                f"Tool calls made so far: {tool_calls!r}"
+            )
+
+        # The agent's own account of what it's doing this turn, collected purely as
+        # evidence per docs/concept.md §7 — NOT used by the chokepoint's decision
+        # logic once that's wired in on day 8/9. The request description used for the
+        # semantic comparison there is built from the tool call itself (name + args +
+        # resource), never from this self-reported text, since an attacker who can
+        # inject instructions could also phrase a report that sounds aligned.
+        current_intent = (
+            "\n".join(block.text for block in response.content if block.type == "text")
+            or None
+        )
+
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
                 result = execute_tool_call(block.name, block.input)
                 tool_calls.append(
-                    {"name": block.name, "input": block.input, "result": result}
+                    {
+                        "name": block.name,
+                        "input": block.input,
+                        "result": result,
+                        "current_intent": current_intent,
+                    }
                 )
                 tool_results.append(
                     {
