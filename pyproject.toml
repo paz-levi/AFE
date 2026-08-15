@@ -7,12 +7,12 @@ requires-python = ">=3.11"
 dependencies = [
     # Claude API — used only by the demo agent/harness (src/afe/agent/harness.py) for
     # LLM + tool calling. Default model: claude-sonnet-5. Not used by AFE's own decision
-    # engine (see docs/concept_1.md §2.3/§11 — the harness is a documented exception to
+    # engine (see docs/concept.md §2.3/§11 — the harness is a documented exception to
     # AFE's "no outbound calls" rule; AFE itself stays local).
     "anthropic",
     # Local embedding model for AFE's own semantic comparison layer (src/afe/gateway/similarity.py,
     # src/afe/baseline/baseline.py). Runs on-premise, no external API call at runtime —
-    # see docs/concept_1.md §2.3.
+    # see docs/concept.md §2.3.
     "sentence-transformers",
     "pydantic",
     "pytest",

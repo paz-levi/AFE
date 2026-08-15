@@ -180,6 +180,18 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
   race (a TOCTOU condition) and overwrite a freeze. Not handled in the POC (single agent,
   no concurrent requests); a production fix would use per-agent locking, optimistic
   concurrency (a version field), or a store backend with real transactions.
+- - **The demo agent (harness) and Pre-Flight's malicious-intent check both use an
+  external LLM API for the demo** — only the Chokepoint's embedding + cosine-similarity
+  decision engine (§2.3) is required to run fully local. Pre-Flight needs nuanced
+  judgment about disguised intent that a small local model can't reliably provide,
+  unlike the Chokepoint's mechanical similarity comparison. A production deployment
+  would run all three — harness, Pre-Flight, and the local engine — fully internal.
+- - **`read_file` has no path restriction today** — it will open any path on disk, including
+  files outside `scenarios/`. Nothing currently prevents an injected instruction from
+  reading real secrets (e.g., `.env`) before the Chokepoint (day 8/9) is wired in to
+  intercept the call. This is exactly the gap the Chokepoint closes at the application
+  layer; container-level filesystem restrictions (see roadmap) would close it
+  independently at the OS layer.
 ## 12. Key concepts
 
 Zero Trust · API Gateway / chokepoint · Prompt Injection (direct/indirect) · Agentic AI / Tool Use · HMAC (integrity vs. secrecy) · JWT · Embeddings · Cosine Similarity · Threshold Calibration · Precision/Recall · False Positive/Negative · Tiered Decision Making · Data Classification / Sensitivity Labeling · Fail-secure · Risk-based Access Control · Audit Trail · MITRE ATLAS · OWASP LLM Top 10
