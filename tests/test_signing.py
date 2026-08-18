@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from afe.baseline.baseline import Baseline
-from afe.baseline.signing import sign_baseline, verify_baseline
+from afe.baseline.signing import sign_baseline, sign_bytes, verify_baseline, verify_bytes
 
 # Hardcoded test-only secret — never call get_hmac_secret() or touch .env here.
 SECRET_KEY = b"test-secret-key-do-not-use-in-prod"
@@ -23,6 +23,23 @@ def _make_baseline(**overrides) -> Baseline:
     }
     fields.update(overrides)
     return Baseline(**fields)
+
+
+def test_sign_bytes_verify_bytes_round_trip():
+    payload = b"arbitrary payload bytes"
+
+    signature = sign_bytes(payload, SECRET_KEY)
+
+    assert verify_bytes(payload, signature, SECRET_KEY) is True
+
+
+def test_sign_bytes_fails_on_tampered_payload():
+    payload = b"hello world"
+    tampered = b"hello worle"  # one byte different (d -> e)
+
+    signature = sign_bytes(payload, SECRET_KEY)
+
+    assert verify_bytes(tampered, signature, SECRET_KEY) is False
 
 
 def test_verify_baseline_round_trip():

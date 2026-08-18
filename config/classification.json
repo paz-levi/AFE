@@ -1,0 +1,18 @@
+{
+  "policy": {
+    "folders": {
+      "/finance": "SECRET",
+      "/reports": "INTERNAL"
+    },
+    "file_overrides": {
+      "/reports/board_summary.md": {
+        "level": "SECRET"
+      },
+      "/finance/press_release_draft.md": {
+        "level": "PUBLIC",
+        "downward_override": true
+      }
+    }
+  },
+  "signature": "3baf208866b34e635bfef505829b302c6c7ff6c4f32a85d440b4c07b34c468a9"
+}
