@@ -85,3 +85,12 @@ def test_tampered_policy_raises_policy_integrity_error(signed_policy, monkeypatc
 
     with pytest.raises(PolicyIntegrityError):
         get_classification("/finance/payroll.csv")
+
+
+def test_missing_leading_slash_still_resolves_via_normalization(monkeypatch):
+    """Proves normalization closes the real risk: an LLM-supplied path missing its
+    leading slash must still resolve to the same classification as the canonical
+    form, against the real signed config/classification.json — not a test fixture."""
+    monkeypatch.setattr(classification, "_POLICY", None)
+
+    assert get_classification("finance/payroll.csv") == "SECRET"

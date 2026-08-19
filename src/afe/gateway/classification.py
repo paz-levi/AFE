@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from afe.gateway.resource_paths import normalize_resource_path
 from afe.gateway.signed_policy import PolicyIntegrityError, load_signed_policy
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,12 @@ def get_classification(path: str) -> str:
     """Resolve the classification level for `path`: an exact match in file_overrides
     wins first (logging a warning if it's a downward override), then the longest
     matching folder prefix in folders, else the fail-secure default CONFIDENTIAL
-    (docs/concept.md §5.2) — never PUBLIC for an unclassified resource."""
+    (docs/concept.md §5.2) — never PUBLIC for an unclassified resource. `path` is
+    normalized before lookup (see resource_paths.py) so an incoming path missing a
+    leading slash, or using backslashes, still matches config/classification.json's
+    canonical (already leading-slash) keys instead of silently falling through to
+    the fail-secure default."""
+    path = normalize_resource_path(path)
     policy = _load_policy()
 
     file_overrides = policy.get("file_overrides", {})

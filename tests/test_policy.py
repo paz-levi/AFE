@@ -84,3 +84,12 @@ def test_decide_tier_triggered_by(score, classification, resource, expected_trig
     result = decide_tier(score, classification, resource, baseline)
 
     assert result.triggered_by == expected_triggered_by
+
+
+def test_decide_tier_allowlist_matches_regardless_of_leading_slash():
+    baseline = _make_baseline(allowed_resources=["reports/board.md"])
+
+    result = decide_tier(0.0, "SECRET", "/reports/board.md", baseline)
+
+    assert result.tier == Tier.GREEN
+    assert result.triggered_by == "allowlist"

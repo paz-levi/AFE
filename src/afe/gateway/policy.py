@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from afe.baseline.baseline import Baseline
+from afe.gateway.resource_paths import normalize_resource_path
 from afe.gateway.signed_policy import load_signed_policy
 
 # repo_root/src/afe/gateway/policy.py -> parents[3] is repo_root.
@@ -77,7 +78,11 @@ def decide_tier(
     4. Otherwise (INTERNAL/CONFIDENTIAL): compare `score` against the
        classification's green/yellow thresholds from config/thresholds.json.
     """
-    if resource in baseline.allowed_resources:
+    normalized_resource = normalize_resource_path(resource)
+    if any(
+        normalize_resource_path(r) == normalized_resource
+        for r in baseline.allowed_resources
+    ):
         return Decision(
             tier=Tier.GREEN,
             reason=f"Resource {resource!r} is explicitly allowlisted in the agent's baseline.",
