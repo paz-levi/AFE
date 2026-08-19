@@ -28,3 +28,23 @@ def test_normalize_resource_path_is_idempotent():
     once = normalize_resource_path("finance\\payroll.csv")
     twice = normalize_resource_path(once)
     assert once == twice == "/finance/payroll.csv"
+
+
+def test_normalize_resource_path_collapses_traversal_segments():
+    # "reports/../finance/payroll.csv" looks like it's under /reports as a raw
+    # string, but ".." backs out of it — the real target is /finance/payroll.csv.
+    # Collapsing this before comparison is what closes the traversal bypass.
+    assert (
+        normalize_resource_path("reports/../finance/payroll.csv")
+        == "/finance/payroll.csv"
+    )
+
+
+def test_normalize_resource_path_leaves_unresolvable_escape_unresolved():
+    # This escapes above any reasonable root even after collapsing "..". It is
+    # deliberately left starting with ".." rather than silently stripped or
+    # coerced into a leading-slash form: a ".."-prefixed string can never match
+    # a real folder or file_override entry, so it's fail-secure by construction —
+    # not because this function does anything special to detect the escape.
+    result = normalize_resource_path("../../etc/passwd")
+    assert result.startswith("..")

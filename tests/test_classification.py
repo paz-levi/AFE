@@ -94,3 +94,15 @@ def test_missing_leading_slash_still_resolves_via_normalization(monkeypatch):
     monkeypatch.setattr(classification, "_POLICY", None)
 
     assert get_classification("finance/payroll.csv") == "SECRET"
+
+
+def test_path_traversal_resolves_to_true_target_not_bypassed(monkeypatch):
+    """Proves the traversal bypass is closed for real against the actual signed
+    config/classification.json, not just unit-tested on normalize_resource_path in
+    isolation. "reports/../finance/payroll.csv" string-prefix-matches /reports
+    (INTERNAL) if ".." isn't collapsed first — but the OS, when the file is
+    actually opened, resolves ".." and reaches the real file under /finance
+    (SECRET). Before the fix, this test would have failed, returning "INTERNAL"."""
+    monkeypatch.setattr(classification, "_POLICY", None)
+
+    assert get_classification("reports/../finance/payroll.csv") == "SECRET"
