@@ -19,14 +19,14 @@ from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 
 # Small, well-known local embedding model — no external API call, no network at
-# runtime. Loaded once, lazily, and reused (see _get_embedding_model), not reloaded on
+# runtime. Loaded once, lazily, and reused (see get_embedding_model), not reloaded on
 # every Baseline.create() call.
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 _model: SentenceTransformer | None = None
 
 
-def _get_embedding_model() -> SentenceTransformer:
+def get_embedding_model() -> SentenceTransformer:
     """Return the shared local embedding model, loading it on first use only."""
     global _model
     if _model is None:
@@ -59,7 +59,7 @@ class Baseline(BaseModel):
     ) -> "Baseline":
         """Build a Baseline, producing task_embedding by encoding `task` with the
         shared local sentence-transformers model — no external API call."""
-        model = _get_embedding_model()
+        model = get_embedding_model()
         task_embedding = model.encode(task).tolist()
         return cls(
             agent_id=agent_id,

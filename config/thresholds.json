@@ -1,0 +1,13 @@
+{
+  "policy": {
+    "INTERNAL": {
+      "yellow": 0.35,
+      "green": 0.55
+    },
+    "CONFIDENTIAL": {
+      "yellow": 0.55,
+      "green": 0.75
+    }
+  },
+  "signature": "ed6b506fc637c9c3d201176b3779f87d95e1b9284b59487f12a3e575d9ece22d"
+}

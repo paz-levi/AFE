@@ -11,13 +11,11 @@ AFE refuses to start (docs/concept.md §2.4, §5).
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
-from afe.baseline.signing import verify_bytes
-from afe.config import get_hmac_secret
+from afe.gateway.signed_policy import PolicyIntegrityError, load_signed_policy
 
 logger = logging.getLogger(__name__)
 
@@ -27,43 +25,21 @@ _CLASSIFICATION_PATH = Path(__file__).resolve().parents[3] / "config" / "classif
 _POLICY: dict[str, Any] | None = None
 
 
-class PolicyIntegrityError(RuntimeError):
-    """Raised when a policy file (classification.json, thresholds.json) is missing,
-    unreadable, or fails HMAC verification. Fail-secure: AFE refuses to start rather
-    than trust an unsigned or tampered policy."""
-
-
 def _load_policy(path: Path | None = None) -> dict[str, Any]:
     """Load and verify the signed policy file at `path` once, caching the result at
     module level. `path` defaults to the current value of _CLASSIFICATION_PATH,
     looked up dynamically (not bound at def-time) so tests can monkeypatch that
     module attribute and have it take effect; normal use never passes `path`
-    explicitly. Any problem — missing file, malformed JSON, missing keys, or a
-    signature that doesn't verify — raises PolicyIntegrityError immediately rather
-    than falling back to an unsigned or partially-trusted read."""
+    explicitly. Delegates the actual read/verify/unwrap to
+    afe.gateway.signed_policy.load_signed_policy — this module only owns the
+    caching."""
     global _POLICY
     if _POLICY is not None:
         return _POLICY
     if path is None:
         path = _CLASSIFICATION_PATH
 
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        policy = data["policy"]
-        signature = data["signature"]
-    except (FileNotFoundError, json.JSONDecodeError, KeyError) as exc:
-        raise PolicyIntegrityError(
-            f"Could not read or parse policy file {path}: {exc}"
-        ) from exc
-
-    canonical = json.dumps(policy, sort_keys=True).encode("utf-8")
-    if not verify_bytes(canonical, signature, get_hmac_secret()):
-        raise PolicyIntegrityError(
-            f"Signature verification failed for {path} — refusing to start. The "
-            "policy file may have been tampered with."
-        )
-
-    _POLICY = policy
+    _POLICY = load_signed_policy(path)
     return _POLICY
 
 
