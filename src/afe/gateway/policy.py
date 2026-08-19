@@ -11,6 +11,7 @@ explicitly allowlisted, regardless of similarity score) — see docs/concept.md 
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,18 @@ class Tier(str, Enum):
     GREEN = "green"
     YELLOW = "yellow"
     RED = "red"
+
+
+@dataclass(frozen=True)
+class Decision:
+    """The outcome of decide_tier: the resulting Tier, a human-readable explanation of
+    why, and which check actually decided it — "allowlist", "classification", or
+    "semantic" — so every decision is self-explaining in the audit log
+    (docs/concept.md §8), not just a bare tier."""
+
+    tier: Tier
+    reason: str
+    triggered_by: str
 
 
 def _load_thresholds(path: Path | None = None) -> dict[str, Any]:
@@ -52,9 +65,9 @@ def _load_thresholds(path: Path | None = None) -> dict[str, Any]:
 
 def decide_tier(
     score: float, classification: str, resource: str, baseline: Baseline
-) -> Tier:
-    """Resolve a JIT request into green/yellow/red, in strict precedence order
-    (docs/concept.md §6):
+) -> Decision:
+    """Resolve a JIT request into a Decision (green/yellow/red, plus why and which
+    check decided it), in strict precedence order (docs/concept.md §6):
 
     1. `resource` is in `baseline.allowed_resources` -> GREEN, regardless of score or
        classification (the allowlist rule).
@@ -65,13 +78,28 @@ def decide_tier(
        classification's green/yellow thresholds from config/thresholds.json.
     """
     if resource in baseline.allowed_resources:
-        return Tier.GREEN
+        return Decision(
+            tier=Tier.GREEN,
+            reason=f"Resource {resource!r} is explicitly allowlisted in the agent's baseline.",
+            triggered_by="allowlist",
+        )
 
     if classification == "PUBLIC":
-        return Tier.GREEN
+        return Decision(
+            tier=Tier.GREEN,
+            reason=f"Resource {resource!r} is classified PUBLIC.",
+            triggered_by="classification",
+        )
 
     if classification == "SECRET":
-        return Tier.RED
+        return Decision(
+            tier=Tier.RED,
+            reason=(
+                f"Resource {resource!r} is classified SECRET and is not in the "
+                "agent's allowed_resources."
+            ),
+            triggered_by="classification",
+        )
 
     thresholds = _load_thresholds()
     level = thresholds.get(classification)
@@ -82,7 +110,29 @@ def decide_tier(
             "— PUBLIC/SECRET are handled above and never reach this lookup)."
         )
     if score >= level["green"]:
-        return Tier.GREEN
+        return Decision(
+            tier=Tier.GREEN,
+            reason=(
+                f"Similarity score {score:.3f} for {classification} resource "
+                f"{resource!r} meets the green threshold ({level['green']})."
+            ),
+            triggered_by="semantic",
+        )
     if score >= level["yellow"]:
-        return Tier.YELLOW
-    return Tier.RED
+        return Decision(
+            tier=Tier.YELLOW,
+            reason=(
+                f"Similarity score {score:.3f} for {classification} resource "
+                f"{resource!r} is between the yellow ({level['yellow']}) and green "
+                f"({level['green']}) thresholds."
+            ),
+            triggered_by="semantic",
+        )
+    return Decision(
+        tier=Tier.RED,
+        reason=(
+            f"Similarity score {score:.3f} for {classification} resource {resource!r} "
+            f"is below the yellow threshold ({level['yellow']})."
+        ),
+        triggered_by="semantic",
+    )

@@ -60,4 +60,27 @@ def test_decide_tier_precedence(score, classification, resource, expected):
 
     result = decide_tier(score, classification, resource, baseline)
 
-    assert result == expected
+    assert result.tier == expected
+
+
+@pytest.mark.parametrize(
+    "score, classification, resource, expected_triggered_by",
+    [
+        # (a) allowlisted resource.
+        (0.0, "SECRET", "reports/board.md", "allowlist"),
+        # (b) PUBLIC classification.
+        (0.0, "PUBLIC", "other/file.md", "classification"),
+        # (c) SECRET classification, not allowlisted.
+        (0.99, "SECRET", "other/file.md", "classification"),
+        # (d) threshold-based decisions, all classification-dependent semantic checks.
+        (0.60, "INTERNAL", "other/file.md", "semantic"),
+        (0.40, "INTERNAL", "other/file.md", "semantic"),
+        (0.10, "INTERNAL", "other/file.md", "semantic"),
+    ],
+)
+def test_decide_tier_triggered_by(score, classification, resource, expected_triggered_by):
+    baseline = _make_baseline()
+
+    result = decide_tier(score, classification, resource, baseline)
+
+    assert result.triggered_by == expected_triggered_by

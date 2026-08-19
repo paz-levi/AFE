@@ -17,6 +17,9 @@ from typing import Any, Callable
 import anthropic
 
 from afe.agent.tools import query_db, read_file, send_email
+from afe.baseline.baseline import Baseline
+from afe.gateway.chokepoint import evaluate_request
+from afe.gateway.policy import Tier
 
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_MAX_TOKENS = 1024
@@ -78,22 +81,34 @@ def _build_tool_definitions() -> list[dict[str, Any]]:
 TOOL_DEFINITIONS = _build_tool_definitions()
 
 
-def execute_tool_call(tool_name: str, tool_input: dict[str, Any]) -> Any:
+def execute_tool_call(tool_name: str, tool_input: dict[str, Any], baseline: Baseline) -> Any:
     """
-    The single call site where a tool actually gets invoked.
+    The single call site where a tool actually gets invoked — and, since day 8, the
+    gateway chokepoint's mandatory pass-through point.
 
-    Looks up `tool_name` in TOOL_REGISTRY and calls it with `tool_input` unpacked as
-    keyword arguments. Every tool call made anywhere in the agent loop must go through
-    this function — not be inlined or duplicated elsewhere — because this is exactly
-    where the gateway chokepoint will be inserted on day 8, ahead of the real call.
+    Every call is first evaluated by afe.gateway.chokepoint.evaluate_request against
+    `baseline`. A "red" Decision blocks the call: the real tool in TOOL_REGISTRY is
+    never invoked, and {"blocked": True, "reason": decision.reason} is returned in its
+    place. "green" and "yellow" decisions proceed to the real dispatch exactly as
+    before.
+
+    Returns a (result, decision) pair — `result` is either the real tool's return value
+    or the blocked-call dict above; `decision` is always the Decision evaluate_request
+    produced, so run_agent can record it in the tool_calls log without evaluating the
+    request a second time (which would double the audit-log entry and the similarity
+    computation per call).
     """
+    decision = evaluate_request(baseline, tool_name, tool_input)
+    if decision.tier == Tier.RED:
+        return {"blocked": True, "reason": decision.reason}, decision
+
     try:
         tool = TOOL_REGISTRY[tool_name]
     except KeyError:
         raise ValueError(
             f"Unknown tool: {tool_name!r}. Registered tools: {sorted(TOOL_REGISTRY)}"
         ) from None
-    return tool(**tool_input)
+    return tool(**tool_input), decision
 
 
 class MaxTurnsExceededError(RuntimeError):
@@ -113,6 +128,7 @@ class MaxTurnsExceededError(RuntimeError):
 def run_agent(
     system_prompt: str,
     task: str,
+    baseline: Baseline,
     *,
     model: str = DEFAULT_MODEL,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -121,8 +137,9 @@ def run_agent(
 ) -> list[dict[str, Any]]:
     """
     Run the agent loop: send `system_prompt` + `task` to Claude along with the tool
-    definitions, execute every tool_use block via execute_tool_call, send the results
-    back as a tool_result message, and repeat until the API's stop_reason is no longer
+    definitions, execute every tool_use block via execute_tool_call (which routes it
+    through the gateway chokepoint against `baseline` first), send the results back as
+    a tool_result message, and repeat until the API's stop_reason is no longer
     "tool_use". A text block in the final response is the agent's answer — printed here
     since this loop is only a usage demo; a later day wires the return value into
     demo/run_demo.py instead of printing.
@@ -131,7 +148,7 @@ def run_agent(
     MaxTurnsExceededError instead of looping forever — see that class's docstring.
 
     Returns the full sequence of tool calls made during the run, in order, as
-    {"name", "input", "result", "current_intent"} dicts.
+    {"name", "input", "result", "current_intent", "decision"} dicts.
     """
     client = client or anthropic.Anthropic()
     messages: list[dict[str, Any]] = [{"role": "user", "content": task}]
@@ -178,13 +195,14 @@ def run_agent(
         tool_results = []
         for block in response.content:
             if block.type == "tool_use":
-                result = execute_tool_call(block.name, block.input)
+                result, decision = execute_tool_call(block.name, block.input, baseline)
                 tool_calls.append(
                     {
                         "name": block.name,
                         "input": block.input,
                         "result": result,
                         "current_intent": current_intent,
+                        "decision": decision,
                     }
                 )
                 tool_results.append(
@@ -206,12 +224,22 @@ if __name__ == "__main__":
 
     load_dotenv()
 
+    task = "Read scenarios/clean_report.md and summarize it in two sentences."
+    baseline = Baseline.create(
+        agent_id="demo-agent",
+        dispatcher="cli",
+        task=task,
+        commands=["read_file", "send_email", "query_db"],
+        allowed_resources=["scenarios/clean_report.md"],
+    )
+
     calls = run_agent(
         system_prompt=(
             "You are a helpful assistant with access to read_file, send_email, and "
             "query_db tools."
         ),
-        task="Read scenarios/clean_report.md and summarize it in two sentences.",
+        task=task,
+        baseline=baseline,
     )
     print(f"\nMade {len(calls)} tool call(s):")
     for call in calls:
