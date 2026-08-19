@@ -12,6 +12,7 @@ storage/audit.jsonl.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +20,9 @@ from afe.baseline.baseline import Baseline
 from afe.gateway import audit, chokepoint
 from afe.gateway.chokepoint import evaluate_request
 from afe.gateway.policy import Tier
+from afe.storage.store import BaselineStore
+
+SIGNATURE = "deadbeef"
 
 
 def _make_baseline(**overrides) -> Baseline:
@@ -48,8 +52,11 @@ def test_allowlisted_resource_is_green_regardless_of_similarity(monkeypatch):
     baseline = _make_baseline(allowed_resources=["reports/board.md"])
     monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "CONFIDENTIAL")
     monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.0)
+    store = MagicMock(spec=BaselineStore)
 
-    decision = evaluate_request(baseline, "read_file", {"path": "reports/board.md"})
+    decision, _, _ = evaluate_request(
+        baseline, SIGNATURE, "read_file", {"path": "reports/board.md"}, store
+    )
 
     assert decision.tier == Tier.GREEN
     assert decision.triggered_by == "allowlist"
@@ -59,8 +66,11 @@ def test_public_classification_is_green(monkeypatch):
     baseline = _make_baseline(allowed_resources=[])
     monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "PUBLIC")
     monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.0)
+    store = MagicMock(spec=BaselineStore)
 
-    decision = evaluate_request(baseline, "read_file", {"path": "public/handbook.md"})
+    decision, _, _ = evaluate_request(
+        baseline, SIGNATURE, "read_file", {"path": "public/handbook.md"}, store
+    )
 
     assert decision.tier == Tier.GREEN
     assert decision.triggered_by == "classification"
@@ -70,8 +80,12 @@ def test_secret_classification_not_allowlisted_is_red_regardless_of_similarity(m
     baseline = _make_baseline(allowed_resources=["reports/board.md"])
     monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "SECRET")
     monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.99)
+    monkeypatch.setattr(chokepoint, "get_hmac_secret", lambda: b"test-secret")
+    store = MagicMock(spec=BaselineStore)
 
-    decision = evaluate_request(baseline, "read_file", {"path": "finance/payroll.csv"})
+    decision, _, _ = evaluate_request(
+        baseline, SIGNATURE, "read_file", {"path": "finance/payroll.csv"}, store
+    )
 
     assert decision.tier == Tier.RED
     assert decision.triggered_by == "classification"

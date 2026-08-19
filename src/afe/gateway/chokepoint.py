@@ -14,10 +14,14 @@ from __future__ import annotations
 from typing import Any
 
 from afe.baseline.baseline import Baseline
+from afe.baseline.signing import sign_baseline
+from afe.config import get_hmac_secret
 from afe.gateway import audit
 from afe.gateway.classification import get_classification
-from afe.gateway.policy import Decision, decide_tier
+from afe.gateway.policy import Decision, Tier, decide_tier
+from afe.gateway.resource_paths import normalize_resource_path
 from afe.gateway.similarity import compute_similarity
+from afe.storage.store import BaselineStore
 
 
 def _extract_resource(tool_name: str, tool_args: dict[str, Any]) -> str:
@@ -35,7 +39,7 @@ def _extract_resource(tool_name: str, tool_args: dict[str, Any]) -> str:
     PUBLIC.
     """
     if tool_name == "read_file":
-        return tool_args["path"]
+        return normalize_resource_path(tool_args["path"])
     first_value = next(iter(tool_args.values()), "")
     return f"{tool_name}:{first_value}"
 
@@ -50,29 +54,57 @@ def _build_description(tool_name: str, tool_args: dict[str, Any]) -> str:
     return f"{tool_name}({tool_args})"
 
 
-def evaluate_request(baseline: Baseline, tool_name: str, tool_args: dict[str, Any]) -> Decision:
-    """The chokepoint itself: evaluate one tool call against `baseline` and return a
-    Decision.
+def evaluate_request(
+    baseline: Baseline,
+    signature: str,
+    tool_name: str,
+    tool_args: dict[str, Any],
+    store: BaselineStore,
+) -> tuple[Decision, Baseline, str]:
+    """The chokepoint itself: evaluate one tool call against `baseline` and return
+    (decision, baseline, signature).
 
-    Extracts the resource and a request description from the actual tool call,
-    resolves the resource's classification, computes its semantic similarity against
-    the baseline's task unconditionally (every decision gets a real similarity_score in
-    the audit log, even when allowlist or classification precedence ends up deciding
-    the tier instead), applies policy precedence via decide_tier, logs the outcome via
-    audit.log_decision, and returns the Decision.
+    Implements the kill switch (docs/concept.md §6): if `baseline` is already frozen,
+    every subsequent request is blocked immediately with no further semantic
+    checking — get_classification/compute_similarity/decide_tier are not called.
+    Otherwise, extracts the resource and a request description from the actual tool
+    call, resolves the resource's classification, computes its semantic similarity
+    against the baseline's task unconditionally (every decision gets a real
+    similarity_score in the audit log, even when allowlist or classification
+    precedence ends up deciding the tier instead), applies policy precedence via
+    decide_tier, and logs the outcome via audit.log_decision.
 
-    Does not implement the kill switch (freezing baseline.status to "frozen" on a red
-    decision) mentioned in this module's own docstring above — that's Day 9 scope. A
-    red Decision here is simply returned to the caller like any other; harness.py is
-    responsible for refusing to act on it.
+    A red decision freezes the baseline: status is updated to "frozen", the updated
+    baseline is re-signed and persisted via `store`, and the *updated* (baseline,
+    signature) pair is returned — not the ones passed in. The caller (Agent) holds
+    baseline/signature as instance state across an entire run; returning the stale
+    pre-freeze pair would mean the very next tool call in this same process still
+    sees status="active" and only learns about the freeze after a future store.get()
+    reload. Returning the updated pair makes the freeze visible immediately, within
+    this same run.
     """
     resource = _extract_resource(tool_name, tool_args)
-    description = _build_description(tool_name, tool_args)
 
+    if baseline.status == "frozen":
+        decision = Decision(
+            tier=Tier.RED,
+            reason=f"Agent {baseline.agent_id} is frozen due to a prior violation.",
+            triggered_by="frozen",
+        )
+        audit.log_decision(baseline.agent_id, resource, "N/A", 0.0, decision)
+        return decision, baseline, signature
+
+    description = _build_description(tool_name, tool_args)
     classification = get_classification(resource)
     score = compute_similarity(description, baseline)
     decision = decide_tier(score, classification, resource, baseline)
 
     audit.log_decision(baseline.agent_id, resource, classification, score, decision)
 
-    return decision
+    if decision.tier == Tier.RED:
+        updated_baseline = baseline.model_copy(update={"status": "frozen"})
+        updated_signature = sign_baseline(updated_baseline, get_hmac_secret())
+        store.save(updated_baseline, updated_signature)
+        return decision, updated_baseline, updated_signature
+
+    return decision, baseline, signature
