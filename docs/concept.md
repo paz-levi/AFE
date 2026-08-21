@@ -68,7 +68,7 @@ This is effectively **segregation of duties**: the controlled party (the agent) 
 | `allowed_resources` | Resources pre-approved in Pre-Flight |
 | `created_at` | Timestamp |
 | `status` | `active` / `frozen` |
-| `signature` | HMAC signature over all fields above |
+| `signature` | HMAC signature over all fields above (in the stored JSON envelope — not a field on the `Baseline` Python object itself; see `signing.py`) |
 
 The signature guarantees **integrity**, not secrecy — the Baseline can't be modified without the system detecting it.
 
@@ -95,15 +95,27 @@ A folder defines a default classification for everything inside it, and an indiv
 
 ### 5.3 Classification affects the threshold, not just "whether to check"
 
-The higher the classification, the higher the semantic similarity required for a green approval. Thresholds are kept in config, not in code:
+The higher the classification, the higher the semantic similarity required for a green approval. Thresholds are kept in config, not in code, and signed with the same HMAC mechanism as any other policy:
 
-| Classification | Threshold for green (example — to calibrate) |
-|---|---|
-| `INTERNAL` | 0.55 |
-| `CONFIDENTIAL` | 0.75 |
+| Classification | Threshold for yellow | Threshold for green |
+|---|---|---|
+| `INTERNAL` | 0.15 | 0.35 |
+| `CONFIDENTIAL` | 0.11 | 0.25 |
 | `SECRET` | Requires explicit allowlist |
 
 This is risk-based access control: the exact same request can come out green on an INTERNAL resource and red on a SECRET one.
+
+**How these values were set — Day 11, a 20-request evaluation set:**
+
+A first run, using initial "placeholder" values (INTERNAL 0.35/0.55, CONFIDENTIAL 0.55/0.75), scored only 60% accuracy (12/20) — not because the decision logic was wrong, but because cosine similarity between a short task sentence and a request description in `tool_name(args)` form (not natural language) tops out around 0.3–0.5 even for genuinely on-topic pairs — a much lower scale than the original thresholds assumed.
+
+All 20 actual scores were checked (not a sample), confirming the relative ranking was fully correct — requests closer to the task always scored higher than requests further from it — so the problem was calibration, not a flaw in the similarity logic itself. Thresholds were recalibrated to the observed range, reaching 90% (18/20).
+
+**The two remaining errors, kept deliberately:**
+- A case scoring 0.095 (expected `yellow`, landed `red`) — just below the new yellow floor. Left as-is on purpose: the eval set contains a genuine contradiction (a 0.095 score labeled `yellow`, a higher 0.107 score labeled `red`) — no single threshold can satisfy both. Per the fail-secure principle, the one error was chosen to fall toward over-blocking, not toward approval.
+- A `query_db` case with a query phrased close to the task text (score 0.501, expected `yellow`, landed `green`) — a known edge case: the description built for non-`read_file` tools comes from the raw argument dict, and can happen to overlap with the task's wording more than it should.
+
+**The takeaway, not just the number:** 20 examples were enough to reveal that the current description format's scale was compressed, but not enough for airtight calibration — see Known Limitations for the sample-size / fit-transform-split discussion this deliberately skipped.
 
 ## 6. The three-tier decision engine
 
@@ -125,7 +137,7 @@ If a reported `current_intent` is still collected, it's stored in the log **as e
 
 ## 8. Audit Trail
 
-Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resource`, `classification`, `similarity_score`, `tier`, `reason`, and `triggered_by` (which check decided — classification, allowlist, or semantics). This last field is what makes the decision explainable rather than a "black box."
+Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resource`, `classification`, `similarity_score`, `tier`, `reason`, and `triggered_by` (which check decided — classification, allowlist, or semantics), plus an optional `current_intent` field when self-reported reasoning was captured for that turn. This last field is what makes the decision explainable rather than a "black box."
 
 ## 9. Current POC scope
 
@@ -164,6 +176,7 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
 - An enforcement component in a fast language (C++/Rust/Go) if critical latency is ever required
 - **A local LLM for the agent's brain itself too** (not just for AFE) — to fully close off the network, not only at the decision layer
 - **A formal policy-management process** — policy-as-code with code review and multiple signatures, instead of a single manual edit
+- **Integration as a hook in real coding-agent tools** (e.g. Claude Code's `PreToolUse` hooks) — architecturally the same shape as Chokepoint (intercept before execution, decide, allow/deny), which would let AFE's decision logic protect a real, already-deployed agent instead of only the demo harness
 
 ## 11. Known limitations (to know, not hide in an interview)
 
@@ -180,21 +193,119 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
   race (a TOCTOU condition) and overwrite a freeze. Not handled in the POC (single agent,
   no concurrent requests); a production fix would use per-agent locking, optimistic
   concurrency (a version field), or a store backend with real transactions.
-- - **The demo agent (harness) and Pre-Flight's malicious-intent check both use an
+- **The demo agent (harness) and Pre-Flight's malicious-intent check both use an
   external LLM API for the demo** — only the Chokepoint's embedding + cosine-similarity
   decision engine (§2.3) is required to run fully local. Pre-Flight needs nuanced
   judgment about disguised intent that a small local model can't reliably provide,
   unlike the Chokepoint's mechanical similarity comparison. A production deployment
   would run all three — harness, Pre-Flight, and the local engine — fully internal.
-- - **`read_file` has no path restriction today** — it will open any path on disk, including
+- **`read_file` has no path restriction today** — it will open any path on disk, including
   files outside `scenarios/`. Nothing currently prevents an injected instruction from
-  reading real secrets (e.g., `.env`) before the Chokepoint (day 8/9) is wired in to
-  intercept the call. This is exactly the gap the Chokepoint closes at the application
-  layer; container-level filesystem restrictions (see roadmap) would close it
-  independently at the OS layer.
+  reading real secrets (e.g., `.env`) before the Chokepoint intercepts the call. This is
+  exactly the gap the Chokepoint closes at the application layer; container-level
+  filesystem restrictions (see roadmap) would close it independently at the OS layer.
+- **`tuple` return over a DTO wrapper for `evaluate_request`** — considered wrapping
+  its `(Decision, Baseline, str)` return in a small dataclass instead. Chose the plain
+  tuple deliberately: there's exactly one call site today, all three values are
+  always returned together with no independent meaning, and there's no concrete
+  near-term requirement for a fourth field. Revisit if either changes — multiple call
+  sites needing independent access to just one field, or a genuine planned addition
+  to what gets returned.
+- **Injected content in the demo scenarios uses a visible HTML comment, not a fully
+  hidden encoding** (e.g. zero-width Unicode characters) — chosen for readability
+  when reviewing the scenario files. This doesn't weaken the demonstration:
+  Chokepoint never inspects file *content* at all, only the *action* an agent takes
+  afterward, so the concealment technique used to hide an injected instruction is
+  irrelevant to detection — the same mechanism catches it regardless.
+- **`allowed_resources` is an explicit trust grant, not a semantic check, and it
+  outranks classification and similarity on purpose.** A resource in a Baseline's
+  `allowed_resources` is approved at Pre-Flight time regardless of what it's
+  classified as later or how similar the request looks — this is intentional: an
+  explicit decision made when the agent was created should win over a probabilistic
+  guess made later. The consequence is real and worth stating plainly: a mistake
+  made *at allowlist-definition time* (e.g. a genuinely sensitive resource
+  mistakenly included) is not caught by any other layer in the system — classification
+  and similarity checks never run once an allowlist match is found. This makes
+  Pre-Flight's allowlist definition the single highest-trust, highest-consequence
+  decision point in the whole pipeline, and it received no special scrutiny beyond a
+  human writing it correctly. A production version would want a stricter review
+  process (e.g. requiring the allowlist itself to be justified against the task
+  description, or a secondary approval) before trusting it this absolutely.
+- **Policy authority separation (control-plane / data-plane split)** — today, the
+  signed policy files live on the same machine that runs AFE and the agent, protected
+  by filesystem read-only permissions and HMAC. A production hardening: the signed
+  policy (classification.json, thresholds.json) and the signing key live on a
+  physically/logically separate system — a dedicated policy authority, or WORM
+  storage, or an HSM for the key — that the AFE host can only *read* from over a
+  restricted channel, never write to. This raises the bar from "compromise one
+  machine" to "compromise two independently-secured systems," even against an
+  attacker who gains full admin/root on the machine running AFE itself. This scales
+  in practice because of inheritance (§5.2): the number of policy *rules* requiring
+  this strict governance is small (top-level folders plus explicit overrides), not
+  one entry per file — millions of individual files inherit automatically. A
+  realistic production design would also tier governance by risk, matching how tools
+  like Open Policy Agent are used in practice: low-sensitivity policy changes (a new
+  INTERNAL folder) go through a lighter, faster process; high-sensitivity changes
+  (what counts as SECRET, or threshold values) require the strict multi-signature/
+  WORM path. Actual per-file classification at scale would come from automated
+  content-scanning (DLP) tooling feeding into these rules, not manual tagging.
+- **`current_intent` only captures self-reported text tied to a turn containing a
+  tool_use block — not a model's final, tool-free reflection.** Observed live in
+  Day 10's demo: one scenario's model self-reported detecting and refusing an
+  injection, but that reflection arrived in the run's FINAL response (no tool_use,
+  just closing text) — a turn current_intent's capture logic never touches. The
+  audit log for that scenario shows no current_intent at all, even though the
+  model's own explanation would have been valuable evidence. Fixing this properly
+  would require a structural change (e.g. a separate, tool-call-independent audit
+  entry for a run's final response) — out of scope for the POC; documented here
+  rather than patched under time pressure.
+- **Live-demo determinism vs. model robustness (Day 10 finding):** in the first live
+  run of `demo/run_demo.py`, neither the indirect-injection scenario nor the
+  insider-threat scenario actually reached the Chokepoint's red/freeze path — the
+  insider prompt was caught earlier, at Pre-Flight (its overreach was legible in
+  plain text), and the model reading `injected_report.md` recognized the hidden
+  `HTML`-comment instruction as suspicious and declined to act on it, on its own,
+  without AFE's intervention. This is not a gap: Chokepoint's red/freeze behavior is
+  proven deterministically by `test_chokepoint.py`/`test_kill_switch.py` regardless
+  of model behavior on any given run. But it does mean a *live* demo can't rely on
+  injection/social-engineering scenarios alone to visibly exercise that path — model
+  susceptibility varies run to run, and a sufficiently robust model may simply
+  refuse the attack before AFE is ever tested. `demo/run_demo.py`'s scenario 6 (a
+  direct, non-injected request for an unauthorized SECRET resource) exists
+  specifically to guarantee the red/freeze path fires visibly on every run,
+  independent of model behavior.
+- **Threshold calibration uses the same 20-example set both to observe errors and to
+  tune thresholds — no separate held-out test set.** A methodologically stricter
+  approach would split into a tuning set and a held-out test set to detect
+  overfitting (calibrating thresholds specifically to look good on the same examples
+  they're then evaluated against — the same reason `scikit-learn` draws a hard line
+  between `.fit()` and `.transform()`, never calling `.fit_transform()` on test
+  data). At n=20, a meaningful split (e.g. 15/5) would leave too few held-out
+  examples per branch to say anything statistically reliable — the split would be
+  symbolic, not rigorous. Chose honest small-set calibration over a fake-rigorous
+  split; a production system would need a substantially larger, independently-
+  labeled evaluation set to support a genuine train/test methodology.
+- **AFE's threat model assumes an attacker who can influence or compromise the
+  agent's inputs (a malicious prompt, an injected document, a manipulated tool
+  argument) — not an attacker with direct write access to the filesystem holding
+  Baseline/policy files *and* the AFE_HMAC_SECRET simultaneously.** If both of those
+  are compromised together, an attacker could forge a validly-signed Baseline with
+  an expanded allowlist, and AFE would trust it completely — HMAC integrity only
+  proves a file wasn't altered *after* signing, not that whoever held the key at
+  signing time was trustworthy. This isn't a gap that was missed; it's a boundary
+  that's consistent with how every layered security system works (defense in
+  depth) — AFE is one layer covering one channel (the agent's actions), and secret
+  storage / filesystem access control (a proper secrets manager or HSM in
+  production, per the roadmap) is a different, necessary layer outside AFE's own
+  scope.
+
+See also `docs/security_findings.md` for a separate, dated log of security issues
+found and fixed in AFE's own code during development (currently: a path-traversal
+bypass in resource classification, found and fixed on Day 9).
+
 ## 12. Key concepts
 
-Zero Trust · API Gateway / chokepoint · Prompt Injection (direct/indirect) · Agentic AI / Tool Use · HMAC (integrity vs. secrecy) · JWT · Embeddings · Cosine Similarity · Threshold Calibration · Precision/Recall · False Positive/Negative · Tiered Decision Making · Data Classification / Sensitivity Labeling · Fail-secure · Risk-based Access Control · Audit Trail · MITRE ATLAS · OWASP LLM Top 10
+Zero Trust · API Gateway / chokepoint · Prompt Injection (direct/indirect) · Agentic AI / Tool Use · HMAC (integrity vs. secrecy) · JWT · Embeddings · Cosine Similarity · Threshold Calibration · Precision/Recall · False Positive/Negative · Tiered Decision Making · Data Classification / Sensitivity Labeling · Fail-secure · Risk-based Access Control · Audit Trail · MITRE ATLAS · OWASP LLM Top 10 · CWE-22 (Path Traversal) · Segregation of Duties · Control-plane / Data-plane separation
 
 ---
 *This document describes the concept and the POC scope. Day-to-day execution detail is in the "Monthly Work Plan" document.*
