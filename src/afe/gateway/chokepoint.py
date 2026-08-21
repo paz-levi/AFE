@@ -60,6 +60,7 @@ def evaluate_request(
     tool_name: str,
     tool_args: dict[str, Any],
     store: BaselineStore,
+    current_intent: str | None = None,
 ) -> tuple[Decision, Baseline, str]:
     """The chokepoint itself: evaluate one tool call against `baseline` and return
     (decision, baseline, signature).
@@ -73,6 +74,12 @@ def evaluate_request(
     similarity_score in the audit log, even when allowlist or classification
     precedence ends up deciding the tier instead), applies policy precedence via
     decide_tier, and logs the outcome via audit.log_decision.
+
+    `current_intent` is the agent's self-reported reasoning for this turn (see
+    harness.py's run()). It is passed straight through to audit.log_decision as
+    evidence (docs/concept.md §7) and nowhere else — it never reaches
+    get_classification, compute_similarity, or decide_tier, so it cannot influence the
+    decision it is merely being logged alongside.
 
     A red decision freezes the baseline: status is updated to "frozen", the updated
     baseline is re-signed and persisted via `store`, and the *updated* (baseline,
@@ -91,7 +98,9 @@ def evaluate_request(
             reason=f"Agent {baseline.agent_id} is frozen due to a prior violation.",
             triggered_by="frozen",
         )
-        audit.log_decision(baseline.agent_id, resource, "N/A", 0.0, decision)
+        audit.log_decision(
+            baseline.agent_id, resource, "N/A", 0.0, decision, current_intent
+        )
         return decision, baseline, signature
 
     description = _build_description(tool_name, tool_args)
@@ -99,7 +108,9 @@ def evaluate_request(
     score = compute_similarity(description, baseline)
     decision = decide_tier(score, classification, resource, baseline)
 
-    audit.log_decision(baseline.agent_id, resource, classification, score, decision)
+    audit.log_decision(
+        baseline.agent_id, resource, classification, score, decision, current_intent
+    )
 
     if decision.tier == Tier.RED:
         updated_baseline = baseline.model_copy(update={"status": "frozen"})

@@ -11,6 +11,7 @@ storage/audit.jsonl.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -89,3 +90,43 @@ def test_secret_classification_not_allowlisted_is_red_regardless_of_similarity(m
 
     assert decision.tier == Tier.RED
     assert decision.triggered_by == "classification"
+
+
+def _last_audit_entry() -> dict:
+    """Read the last JSONL line written to the (redirected) audit log."""
+    lines = audit.AUDIT_LOG_PATH.read_text(encoding="utf-8").strip().splitlines()
+    return json.loads(lines[-1])
+
+
+def test_current_intent_recorded_in_audit_log_when_provided(monkeypatch):
+    baseline = _make_baseline(allowed_resources=["reports/board.md"])
+    monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "PUBLIC")
+    monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.0)
+    store = MagicMock(spec=BaselineStore)
+
+    evaluate_request(
+        baseline,
+        SIGNATURE,
+        "read_file",
+        {"path": "public/handbook.md"},
+        store,
+        current_intent="I'm reading the handbook as requested.",
+    )
+
+    entry = _last_audit_entry()
+    assert entry["current_intent"] == "I'm reading the handbook as requested."
+
+
+def test_current_intent_absent_from_audit_log_when_not_provided(monkeypatch):
+    baseline = _make_baseline(allowed_resources=["reports/board.md"])
+    monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "PUBLIC")
+    monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.0)
+    store = MagicMock(spec=BaselineStore)
+
+    evaluate_request(
+        baseline, SIGNATURE, "read_file", {"path": "public/handbook.md"}, store
+    )
+
+    entry = _last_audit_entry()
+    # Absent entirely, not null-padded — most decisions carry no self-reported text.
+    assert "current_intent" not in entry
