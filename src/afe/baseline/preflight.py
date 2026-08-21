@@ -14,6 +14,12 @@ import anthropic
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
+
+class PreFlightRejectedError(RuntimeError):
+    """Raised when check_intent flags a system prompt as malicious, before any
+    Baseline is created for it."""
+
+
 PREFLIGHT_SYSTEM_PROMPT = (
     "You are a security reviewer performing Pre-Flight screening on the system prompt "
     "for a new AI agent, before it is allowed to run. Decide whether the system prompt "

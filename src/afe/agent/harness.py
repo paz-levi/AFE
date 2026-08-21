@@ -18,6 +18,7 @@ import anthropic
 
 from afe.agent.tools import query_db, read_file, send_email
 from afe.baseline.baseline import Baseline
+from afe.baseline.preflight import PreFlightRejectedError, check_intent
 from afe.baseline.signing import sign_baseline
 from afe.config import get_hmac_secret
 from afe.gateway.chokepoint import evaluate_request
@@ -109,11 +110,17 @@ class Agent:
         baseline: Baseline,
         signature: str,
         store: BaselineStore,
+        system_prompt: str,
         client: anthropic.Anthropic | None = None,
     ) -> None:
         self.baseline = baseline
         self.signature = signature
         self.store = store
+        # The system prompt this agent was Pre-Flight-screened with (see create). run()
+        # reads it from here rather than taking it as a parameter, so the prompt that
+        # actually reaches the API is the same one check_intent cleared — a run can't
+        # substitute a different, unscreened prompt after the fact.
+        self.system_prompt = system_prompt
         self.client = client or anthropic.Anthropic()
 
     @classmethod
@@ -121,15 +128,31 @@ class Agent:
         cls,
         agent_id: str,
         dispatcher: str,
+        system_prompt: str,
         task: str,
         commands: list[str],
         allowed_resources: list[str],
         store: BaselineStore,
         client: anthropic.Anthropic | None = None,
     ) -> "Agent":
-        """Build a new Baseline (Baseline.create), sign it, persist it via `store`,
-        and return a ready-to-run Agent — bundles the create+sign+register sequence
-        into one call, same alternate-constructor pattern as Baseline.create."""
+        """Pre-Flight-screen `system_prompt`, then build a new Baseline
+        (Baseline.create), sign it, persist it via `store`, and return a ready-to-run
+        Agent — bundles the screen+create+sign+register sequence into one call, same
+        alternate-constructor pattern as Baseline.create.
+
+        The screen runs FIRST, before Baseline.create: if check_intent flags the prompt
+        as malicious this raises PreFlightRejectedError immediately, and no Baseline is
+        built, signed, or saved. That ordering is the point — AFE must never end up
+        holding a signed Baseline that authorizes a prompt it would have rejected
+        (docs/concept.md §2.1). Catching *direct* prompt injection here is Pre-Flight's
+        whole job; *indirect* injection arriving later via a document the agent reads is
+        caught downstream at the chokepoint instead.
+        """
+        client = client or anthropic.Anthropic()
+        is_malicious, explanation = check_intent(system_prompt, client=client)
+        if is_malicious:
+            raise PreFlightRejectedError(explanation)
+
         baseline = Baseline.create(
             agent_id=agent_id,
             dispatcher=dispatcher,
@@ -139,13 +162,22 @@ class Agent:
         )
         signature = sign_baseline(baseline, get_hmac_secret())
         store.save(baseline, signature)
-        return cls(baseline, signature, store, client=client)
+        return cls(baseline, signature, store, system_prompt, client=client)
 
-    def _execute_tool_call(self, tool_name: str, tool_input: dict[str, Any]) -> tuple[Any, Decision]:
+    def _execute_tool_call(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        current_intent: str | None = None,
+    ) -> tuple[Any, Decision]:
         """The single call site where a tool actually gets invoked, and the
         chokepoint's mandatory pass-through point. Updates self.baseline/
         self.signature from evaluate_request's return value on every call, frozen or
         not, so the kill switch is visible immediately within this run.
+
+        `current_intent` is passed straight through to evaluate_request, which passes
+        it straight through to the audit log as evidence only (docs/concept.md §7) —
+        it plays no part in the decision made here.
 
         Returns a (result, decision) pair — `result` is either the real tool's return
         value or a {"blocked": True, "reason": ...} dict when the decision is red;
@@ -153,7 +185,12 @@ class Agent:
         record it in the tool_calls log without evaluating the request a second time.
         """
         decision, self.baseline, self.signature = evaluate_request(
-            self.baseline, self.signature, tool_name, tool_input, self.store
+            self.baseline,
+            self.signature,
+            tool_name,
+            tool_input,
+            self.store,
+            current_intent,
         )
         if decision.tier == Tier.RED:
             return {"blocked": True, "reason": decision.reason}, decision
@@ -168,7 +205,6 @@ class Agent:
 
     def run(
         self,
-        system_prompt: str,
         task: str,
         *,
         model: str = DEFAULT_MODEL,
@@ -176,13 +212,19 @@ class Agent:
         max_turns: int = 10,
     ) -> list[dict[str, Any]]:
         """
-        Run the agent loop: send `system_prompt` + `task` to Claude along with the
-        tool definitions, execute every tool_use block via self._execute_tool_call
+        Run the agent loop: send self.system_prompt (the Pre-Flight-screened prompt this
+        agent was created with — not a parameter, so an unscreened prompt can't be
+        swapped in at run time) + `task` to Claude along with the tool definitions,
+        execute every tool_use block via self._execute_tool_call
         (which routes it through the gateway chokepoint against self.baseline first),
         send the results back as a tool_result message, and repeat until the API's
         stop_reason is no longer "tool_use". A text block in the final response is
         the agent's answer — printed here since this loop is only a usage demo; a
         later day wires the return value into demo/run_demo.py instead of printing.
+
+        `task` is the literal opening user message. It is independent of the task string
+        used to build the Baseline's embedding at creation time — the demo happens to
+        reuse one string for both, but nothing requires that.
 
         `max_turns` caps the number of tool_use turns; exceeding it raises
         MaxTurnsExceededError instead of looping forever — see that class's docstring.
@@ -204,7 +246,7 @@ class Agent:
             response = self.client.messages.create(
                 model=model,
                 max_tokens=max_tokens,
-                system=system_prompt,
+                system=self.system_prompt,
                 tools=TOOL_DEFINITIONS,
                 messages=messages,
             )
@@ -234,7 +276,9 @@ class Agent:
             tool_results = []
             for block in response.content:
                 if block.type == "tool_use":
-                    result, decision = self._execute_tool_call(block.name, block.input)
+                    result, decision = self._execute_tool_call(
+                        block.name, block.input, current_intent
+                    )
                     tool_calls.append(
                         {
                             "name": block.name,
@@ -270,19 +314,17 @@ if __name__ == "__main__":
     agent = Agent.create(
         agent_id="demo-agent",
         dispatcher="cli",
+        system_prompt=(
+            "You are a helpful assistant with access to read_file, send_email, and "
+            "query_db tools."
+        ),
         task=task,
         commands=["read_file", "send_email", "query_db"],
         allowed_resources=["scenarios/clean_report.md"],
         store=store,
     )
 
-    calls = agent.run(
-        system_prompt=(
-            "You are a helpful assistant with access to read_file, send_email, and "
-            "query_db tools."
-        ),
-        task=task,
-    )
+    calls = agent.run(task=task)
     print(f"\nMade {len(calls)} tool call(s):")
     for call in calls:
         print(f"  - {call['name']}({call['input']})")
