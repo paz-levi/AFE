@@ -18,6 +18,9 @@ dependencies = [
     "pytest",
     # Loads ANTHROPIC_API_KEY from a local .env file (already in .gitignore).
     "python-dotenv",
+    # Terminal color for demo/run_demo.py's output only — presentation, not part of
+    # AFE's own decision engine.
+    "colorama",
 ]
 
 [build-system]

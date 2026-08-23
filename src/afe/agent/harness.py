@@ -122,6 +122,10 @@ class Agent:
         # substitute a different, unscreened prompt after the fact.
         self.system_prompt = system_prompt
         self.client = client or anthropic.Anthropic()
+        # The agent's final text response from its most recent run(), or None if it
+        # hasn't run yet or produced no text. Set by run(), never printed there — see
+        # run()'s docstring.
+        self.last_response: str | None = None
 
     @classmethod
     def create(
@@ -193,6 +197,16 @@ class Agent:
             current_intent,
         )
         if decision.tier == Tier.RED:
+            # No real tool ever runs on this path: we return here, before the
+            # TOOL_REGISTRY[tool_name] lookup below is ever reached, so the tool
+            # function itself is never called. That makes it a structural
+            # guarantee — enforced by control flow, not by any check performed
+            # after the fact — that self.last_response (set later in run(),
+            # purely from the model's own final text blocks) can never contain
+            # real file/tool content when this was the blocking call: it can
+            # only be whatever refusal wording the model produces after seeing
+            # this {"blocked": True, "reason": ...} dict fed back as the
+            # tool_result.
             return {"blocked": True, "reason": decision.reason}, decision
 
         try:
@@ -219,8 +233,8 @@ class Agent:
         (which routes it through the gateway chokepoint against self.baseline first),
         send the results back as a tool_result message, and repeat until the API's
         stop_reason is no longer "tool_use". A text block in the final response is
-        the agent's answer — printed here since this loop is only a usage demo; a
-        later day wires the return value into demo/run_demo.py instead of printing.
+        the agent's answer — stored on self.last_response, not printed, so callers
+        (e.g. demo/run_demo.py) control how much of it, if any, to display.
 
         `task` is the literal opening user message. It is independent of the task string
         used to build the Baseline's embedding at creation time — the demo happens to
@@ -256,8 +270,7 @@ class Agent:
                 final_text = "\n".join(
                     block.text for block in response.content if block.type == "text"
                 )
-                if final_text:
-                    print(f"Final answer:\n{final_text}")
+                self.last_response = final_text or None
                 break
 
             turns += 1
@@ -325,6 +338,8 @@ if __name__ == "__main__":
     )
 
     calls = agent.run(task=task)
+    if agent.last_response:
+        print(f"Final answer:\n{agent.last_response}")
     print(f"\nMade {len(calls)} tool call(s):")
     for call in calls:
         print(f"  - {call['name']}({call['input']})")
