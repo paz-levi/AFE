@@ -1,6 +1,6 @@
 # Alpha-Flow Engine (AFE)
 
-An application-layer (Layer 7) security gate that sits between an AI agent and a sensitive resource, and checks not "is there permission" — but "does what the agent is trying to do right now still match what it was sent to do."
+An application-layer (Layer 7) security proxy and runtime guardrail that sits between an AI agent and a sensitive resource, checking not "is there permission?" but "does what the agent is trying to do right now still match what it was dispatched to do?"
 
 **[Demo video/GIF — coming soon]**
 
@@ -32,13 +32,15 @@ flowchart TD
 
 ## Quick start
 
-Create a virtual environment and install AFE in editable mode:
+Create a virtual environment and install AFE in editable mode. Pin an explicit Python version — a bare `python -m venv` silently picks up whichever Python happens to be first on PATH, which has already bitten development once (a stray `python` invocation created a `.venv` against 3.14, which breaks on `typing` imports AFE needs 3.13 for):
 
 ```bash
-python -m venv .venv
+python3.13 -m venv .venv   # or: py -3.13 -m venv .venv   on Windows
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -e .
 ```
+
+If venv creation or `pip install -e .` fails with an import error inside `typing` or a similar stdlib module, the venv was very likely created against the wrong Python version — delete `.venv` and recreate it with an explicit version as shown above.
 
 Create a `.env` file at the repo root — it is gitignored and never committed. Two secrets go in it, and they aren't equivalent:
 
@@ -48,7 +50,7 @@ Create a `.env` file at the repo root — it is gitignored and never committed. 
 ANTHROPIC_API_KEY=sk-...
 ```
 
-**2. `AFE_HMAC_SECRET`** — this one isn't a plug-and-play value. `config/classification.json` and `config/thresholds.json` are already HMAC-signed and committed to this repo, signed with the original author's secret (not published). If you set your own `AFE_HMAC_SECRET`, AFE will fail to verify those files' existing signatures and refuse to start — by design, fail-secure: a mismatched secret is indistinguishable from a tampered policy (see [docs/concept.md §2.4](docs/concept.md#24-core-principle-the-rules-themselves-are-locked-too-not-just-the-badge)). Pick your own value, then re-sign both policy files with it before running anything:
+**2. `AFE_HMAC_SECRET`** — this one isn't a plug-and-play value. Policy files in this repository are pre-signed with a default development key. If you set a custom `AFE_HMAC_SECRET` in your `.env`, re-sign both files before running anything: AFE will otherwise fail to verify those files' existing signatures and refuse to start — by design, fail-secure: a mismatched secret is indistinguishable from a tampered policy (see [docs/concept.md §2.4](docs/concept.md#24-core-principle-the-rules-themselves-are-locked-too-not-just-the-badge)).
 
 ```bash
 AFE_HMAC_SECRET=<pick any value>   # add to .env
