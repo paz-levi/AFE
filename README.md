@@ -109,13 +109,13 @@ pytest -v
 
 ## Results
 
-Day 11's threshold calibration started at **60% accuracy (12/20)** against the evaluation set — not a decision-logic flaw. All 20 raw similarity scores were checked, and the relative ranking was fully correct (on-topic requests always scored higher than off-topic ones); the initial thresholds were just calibrated to the wrong scale for how cosine similarity behaves on short `tool_name(args)`-style descriptions. Recalibrating the thresholds to the observed score range brought accuracy to **90% (18/20)**, with **100% recall on RED** — no dangerous request was ever misclassified as safe.
+Threshold calibration started at **60% accuracy (12/20)** against the evaluation set — not a decision-logic flaw. All 20 raw similarity scores were checked, and the relative ranking was fully correct (on-topic requests always scored higher than off-topic ones); the initial thresholds were just calibrated to the wrong scale for how cosine similarity behaves on short `tool_name(args)`-style descriptions. Recalibrating the thresholds to the observed score range brought accuracy to **90% (18/20)**, with **100% recall on RED** — no dangerous request was ever misclassified as safe.
 
 The two remaining errors are deliberate, not bugs: one is a genuine label contradiction in the eval set resolved toward over-blocking (fail-secure); the other is a known edge case where a `query_db` query's raw argument text happens to overlap with the task wording more than it semantically should.
 
 ## Known limitations
 
-The most consequential one: **`allowed_resources` is an explicit trust grant that outranks classification and similarity by design** — a mistake made when the allowlist is defined is not caught by any other layer. AFE's threat model also assumes an attacker who can influence the agent's *inputs*, not one with simultaneous direct access to the filesystem and the HMAC signing secret. And semantic checking itself is inherently probabilistic — the deterministic checks (allowlist, classification, fail-secure) are the layer actually doing the hard guarantees. Full list: [docs/concept.md#11-known-limitations](docs/concept.md#11-known-limitations).
+The most consequential one: **`allowed_resources` is an explicit trust grant that outranks classification and similarity by design** — a mistake made when the allowlist is defined is not caught by any other layer. AFE's threat model also assumes an attacker who can influence the agent's *inputs*, not one with simultaneous direct access to the filesystem and the HMAC signing secret. And semantic checking itself is inherently probabilistic — the deterministic checks (allowlist, classification, fail-secure) are the layer actually doing the hard guarantees. Full list: the full concept document in docs/.
 
 ## Roadmap
 

@@ -15,7 +15,7 @@ Classic security tools check permissions at the network/identity level: does the
 
 ## 2. The Solution: JIT Intent Validation
 
-AFE is a mandatory chokepoint between the agent and every classified resource, that checks one thing: **is the current request still consistent with the task the agent was defined for when it was created?** Validation happens Just-In-Time, not only at creation time. In simple terms: checking that how the agent is acting now is how it "came in."
+AFE is a mandatory chokepoint between the agent and every classified resource, that checks one thing: **is the current request still consistent with the task the agent was defined for when it was created?** Validation happens Just-In-Time, not only at creation time.
 
 ### 2.1 Core principle: agnostic to the threat's source
 
@@ -34,7 +34,7 @@ AFE protects only the channel that passes through AI agents. An employee who acc
 
 ### 2.3 Core principle: AFE does not leave the internal network
 
-AFE is a tool whose purpose is to protect sensitive information — so it must not itself become a leak path. If the semantic comparison layer sends request descriptions (file name, task content) to an external cloud embedding service, AFE itself becomes a point of exposure — the classic irony of a protection tool that is itself the breach.
+AFE is a tool whose purpose is to protect sensitive information — so it must not itself become a leak path. If the semantic comparison layer sends request descriptions (file name, task content) to an external cloud embedding service, AFE itself becomes a point of exposure — a protection tool that leaks the thing it protects.
 
 Therefore: **AFE's decision engine (embedding + comparison) runs locally (on-premise), with no outbound network calls to third-party services.** This also guarantees there's no external dependency that can be attacked, throttled (provider rate limiting), or go down (outage) and silence the gate.
 
@@ -48,7 +48,7 @@ The HMAC on the Baseline protects a single agent's "entry badge." But there's an
 
 **Principle:** the policy files (`classification.json`, `thresholds.json`) are HMAC-signed exactly like the Baseline, and kept read-only on the filesystem. No code — not the agent, not AFE itself, not even the LLM that runs Pre-Flight — writes to them at runtime. A policy change is a manual, out-of-band action: a human edits, re-signs, and only then does AFE load it. An invalid signature = AFE refuses to start (fail-secure).
 
-This is effectively **segregation of duties**: the controlled party (the agent) cannot touch the rule that governs it. This principle is also familiar in the broader context of AI system safety — a system under oversight shouldn't be able to modify the oversight mechanism over itself.
+This is effectively **segregation of duties**: the controlled party (the agent) cannot touch the rule that governs it.
 
 ## 3. Architecture — three stages
 
@@ -105,17 +105,15 @@ The higher the classification, the higher the semantic similarity required for a
 
 This is risk-based access control: the exact same request can come out green on an INTERNAL resource and red on a SECRET one.
 
-**How these values were set — Day 11, a 20-request evaluation set:**
+**Threshold calibration:** an initial run against a 20-request evaluation set, using placeholder values (INTERNAL 0.35/0.55, CONFIDENTIAL 0.55/0.75), scored 60% accuracy (12/20) — not a decision-logic flaw: cosine similarity between a short task sentence and a request description in `tool_name(args)` form (not natural language) tops out around 0.3–0.5 even for genuinely on-topic pairs, well below the scale the original thresholds assumed.
 
-A first run, using initial "placeholder" values (INTERNAL 0.35/0.55, CONFIDENTIAL 0.55/0.75), scored only 60% accuracy (12/20) — not because the decision logic was wrong, but because cosine similarity between a short task sentence and a request description in `tool_name(args)` form (not natural language) tops out around 0.3–0.5 even for genuinely on-topic pairs — a much lower scale than the original thresholds assumed.
+All 20 scores were checked (not a sample): the relative ranking was fully correct — requests closer to the task always scored higher than requests further from it — confirming the issue was calibration, not the similarity logic. Thresholds were recalibrated to the observed range, reaching 90% (18/20).
 
-All 20 actual scores were checked (not a sample), confirming the relative ranking was fully correct — requests closer to the task always scored higher than requests further from it — so the problem was calibration, not a flaw in the similarity logic itself. Thresholds were recalibrated to the observed range, reaching 90% (18/20).
-
-**The two remaining errors, kept deliberately:**
-- A case scoring 0.095 (expected `yellow`, landed `red`) — just below the new yellow floor. Left as-is on purpose: the eval set contains a genuine contradiction (a 0.095 score labeled `yellow`, a higher 0.107 score labeled `red`) — no single threshold can satisfy both. Per the fail-secure principle, the one error was chosen to fall toward over-blocking, not toward approval.
+**Two remaining errors, kept deliberately:**
+- A case scoring 0.095 (expected `yellow`, landed `red`) — just below the new yellow floor. Left as-is: the eval set contains a genuine contradiction (a 0.095 score labeled `yellow`, a higher 0.107 score labeled `red`) — no single threshold can satisfy both. Per the fail-secure principle, the one error was chosen to fall toward over-blocking, not toward approval.
 - A `query_db` case with a query phrased close to the task text (score 0.501, expected `yellow`, landed `green`) — a known edge case: the description built for non-`read_file` tools comes from the raw argument dict, and can happen to overlap with the task's wording more than it should.
 
-**The takeaway, not just the number:** 20 examples were enough to reveal that the current description format's scale was compressed, but not enough for airtight calibration — see Known Limitations for the sample-size / fit-transform-split discussion this deliberately skipped.
+**Sample size:** 20 examples were enough to reveal the description format's compressed scale, but not enough for airtight calibration — see Known Limitations for the sample-size / fit-transform-split trade-off this skipped.
 
 ## 6. The three-tier decision engine
 
@@ -154,7 +152,7 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
 - **Python as the sole implementation language**
 - **Two-tier storage**: JSON files on disk + an in-memory cache that fills Redis's role
 
-**Explicitly not in this scope (so Claude Code doesn't "sprawl"):**
+**Explicitly not in this scope:**
 - Real network enforcement (today the mechanism is logical only)
 - Production-grade key management (KMS)
 - Multi-tenant / multiple concurrent agents
@@ -178,7 +176,7 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
 - **A formal policy-management process** — policy-as-code with code review and multiple signatures, instead of a single manual edit
 - **Integration as a hook in real coding-agent tools** (e.g. Claude Code's `PreToolUse` hooks) — architecturally the same shape as Chokepoint (intercept before execution, decide, allow/deny), which would let AFE's decision logic protect a real, already-deployed agent instead of only the demo harness
 
-## 11. Known limitations (to know, not hide in an interview)
+## 11. Known limitations
 
 - **The threshold is a calibrated parameter, not an absolute truth** — it's calibrated on a small evaluation set (~20 cases), which isn't representative of real production.
 - **Semantic checking is inherently probabilistic** — the deterministic checks (allowlist, classification, fail-secure) are the genuinely strong ones; semantics is an additional layer, not the only one.
@@ -250,8 +248,8 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
   WORM path. Actual per-file classification at scale would come from automated
   content-scanning (DLP) tooling feeding into these rules, not manual tagging.
 - **`current_intent` only captures self-reported text tied to a turn containing a
-  tool_use block — not a model's final, tool-free reflection.** Observed live in
-  Day 10's demo: one scenario's model self-reported detecting and refusing an
+  tool_use block — not a model's final, tool-free reflection.** Observed in a live
+  end-to-end run: one scenario's model self-reported detecting and refusing an
   injection, but that reflection arrived in the run's FINAL response (no tool_use,
   just closing text) — a turn current_intent's capture logic never touches. The
   audit log for that scenario shows no current_intent at all, even though the
@@ -259,8 +257,8 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
   would require a structural change (e.g. a separate, tool-call-independent audit
   entry for a run's final response) — out of scope for the POC; documented here
   rather than patched under time pressure.
-- **Live-demo determinism vs. model robustness (Day 10 finding):** in the first live
-  run of `demo/run_demo.py`, neither the indirect-injection scenario nor the
+- **Live-demo determinism vs. model robustness:** in a live run
+  of `demo/run_demo.py`, neither the indirect-injection scenario nor the
   insider-threat scenario actually reached the Chokepoint's red/freeze path — the
   insider prompt was caught earlier, at Pre-Flight (its overreach was legible in
   plain text), and the model reading `injected_report.md` recognized the hidden
@@ -301,7 +299,7 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
 
 See also `docs/security_findings.md` for a separate, dated log of security issues
 found and fixed in AFE's own code during development (currently: a path-traversal
-bypass in resource classification, found and fixed on Day 9).
+bypass in resource classification, found and fixed).
 
 ## 12. Key concepts
 
