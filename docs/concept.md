@@ -1,6 +1,6 @@
 # Alpha-Flow Engine (AFE) — Project Foundation Document
 
-> **Usage note:** This is the project's persistent context document. Save it in the repo as `docs/concept.md` so Claude Code sees it automatically in every session, without you needing to paste it again.
+
 
 ## One-line idea
 
