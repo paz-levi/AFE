@@ -1,5 +1,7 @@
 # Alpha-Flow Engine (AFE)
 
+[![tests](https://github.com/paz-levi/AFE/actions/workflows/tests.yml/badge.svg)](https://github.com/paz-levi/AFE/actions/workflows/tests.yml)
+
 An application-layer (Layer 7) security proxy and runtime guardrail that sits between an AI agent and a sensitive resource, checking not "is there permission?" but "does what the agent is trying to do right now still match what it was dispatched to do?"
 
 ## Demo
