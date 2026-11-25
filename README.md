@@ -6,6 +6,54 @@ Alpha-Flow Engine (AFE) is a prototype decision engine for an LLM agent's tool c
 
 **It has no enforcement layer.** Nothing forces an agent's tool calls through AFE; the demo harness in this repo calls it before every tool call, and blocks the call itself on RED. A proxy or hook that enforces this on a real agent is on the Roadmap. Everything here runs locally as a research prototype.
 
+## Quick start
+
+```bash
+pip install -e ".[dev]"
+pytest
+python eval/run_eval.py
+```
+
+Run these inside a virtual environment (`python -m venv .venv`, then
+`source .venv/bin/activate`, or `.venv\Scripts\activate` on Windows). Python 3.11 to
+3.14: the CI matrix covers all four, and the tests have been run locally on 3.13 and
+3.14 (Windows).
+
+- **No API key needed** for the tests or the evals. The one Claude call in the engine
+  (Pre-Flight's prompt screening) is mocked in the tests, and `eval/run_eval.py` and
+  `eval/run_indirect_eval.py` make no API calls.
+- **First run downloads the embedding model** (`all-MiniLM-L6-v2`) from Hugging Face;
+  after that it runs from the local cache.
+- **No secret needed either.** With `AFE_HMAC_SECRET` unset, AFE uses a public
+  development key that the policy files in this repo are signed with, and prints a
+  warning. That key is for local development only; see
+  [Known limitations](#known-limitations).
+
+Other entry points:
+
+```bash
+python eval/run_eval.py --set heldout   # the held-out set (see Results)
+python eval/run_indirect_eval.py        # indirect prompt-injection fixture
+python demo/run_demo.py                 # six-scenario demo: needs ANTHROPIC_API_KEY
+```
+
+The demo makes real Claude API calls (agent and Pre-Flight). Put the key in a `.env`
+file at the repo root (gitignored):
+
+```bash
+ANTHROPIC_API_KEY=sk-...
+```
+
+**Using your own signing key.** Set `AFE_HMAC_SECRET` (environment or `.env`) and
+re-sign both policy files with it, or AFE will refuse to start: a signature made with
+a different key is indistinguishable from a tampered policy (fail-secure, see
+[docs/concept.md §2.4](docs/concept.md#24-core-principle-the-rules-themselves-are-locked-too-not-just-the-badge)).
+
+```bash
+python scripts/sign_policy.py config/classification.json
+python scripts/sign_policy.py config/thresholds.json
+```
+
 ## Demo
 
 **Scenario 6 — a direct request for a non-allowlisted SECRET resource, blocked at the Chokepoint:**
@@ -37,8 +85,6 @@ unrelated file, justified only by an unverifiable claim ("the finance director
 asked for this directly"). Classic social-engineering scope creep.
 ```
 
-Full run instructions: see Quick Start below.
-
 ## The Problem
 
 Classic security tools check permissions at the network/identity level: does the agent technically have access? If yes, it passes — blind to intent. That gap lets two very different attacks through with the exact same valid permissions: an **insider threat** (an employee plants a hidden instruction in the original prompt) and **indirect prompt injection** (an attacker plants hidden instructions in a file, email, or page the agent reads mid-task). Neither trips a permissions check, because nothing about *permission* changed.
@@ -63,52 +109,6 @@ flowchart TD
     H -->|above green threshold| GREEN3[["GREEN — approved"]]
     H -->|near threshold| YELLOW[["YELLOW — approved + logged for review"]]
     H -->|below threshold| RED2[["RED — blocked + agent frozen"]]
-```
-
-## Quick start
-
-Create a virtual environment and install AFE in editable mode. Pin an explicit Python version — a bare `python -m venv` silently picks up whichever Python happens to be first on PATH, which has already bitten development once (a stray `python` invocation created a `.venv` against 3.14, which breaks on `typing` imports AFE needs 3.13 for):
-
-```bash
-python3.13 -m venv .venv   # or: py -3.13 -m venv .venv   on Windows
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e .
-```
-
-If venv creation or `pip install -e .` fails with an import error inside `typing` or a similar stdlib module, the venv was very likely created against the wrong Python version — delete `.venv` and recreate it with an explicit version as shown above.
-
-Create a `.env` file at the repo root — it is gitignored and never committed. Two secrets go in it, and they aren't equivalent:
-
-**1. `ANTHROPIC_API_KEY`** — used only by the demo harness to call the Claude API:
-
-```bash
-ANTHROPIC_API_KEY=sk-...
-```
-
-**2. `AFE_HMAC_SECRET`** — this one isn't a plug-and-play value. Policy files in this repository are pre-signed with a default development key. If you set a custom `AFE_HMAC_SECRET` in your `.env`, re-sign both files before running anything: AFE will otherwise fail to verify those files' existing signatures and refuse to start — by design, fail-secure: a mismatched secret is indistinguishable from a tampered policy (see [docs/concept.md §2.4](docs/concept.md#24-core-principle-the-rules-themselves-are-locked-too-not-just-the-badge)).
-
-```bash
-AFE_HMAC_SECRET=<pick any value>   # add to .env
-python scripts/sign_policy.py config/classification.json
-python scripts/sign_policy.py config/thresholds.json
-```
-
-Run the six-scenario end-to-end demo (real Claude API calls, real signed Baselines, real chokepoint):
-
-```bash
-python demo/run_demo.py
-```
-
-Run the threshold-calibration eval set:
-
-```bash
-python eval/run_eval.py
-```
-
-Run the test suite:
-
-```bash
-pytest -v
 ```
 
 ## Results
