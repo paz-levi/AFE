@@ -168,6 +168,13 @@ class Agent:
         store.save(baseline, signature)
         return cls(baseline, signature, store, system_prompt, client=client)
 
+    def _granted_tool_definitions(self) -> list[dict[str, Any]]:
+        """The tool definitions the LLM is offered: only those in
+        self.baseline.commands. The model never sees an ungranted tool, so a call to
+        one cannot be an innocent mistake caused by seeing it in the tool list (the
+        chokepoint still blocks such a call; see check_command)."""
+        return [t for t in TOOL_DEFINITIONS if t["name"] in self.baseline.commands]
+
     def _execute_tool_call(
         self,
         tool_name: str,
@@ -228,7 +235,8 @@ class Agent:
         """
         Run the agent loop: send self.system_prompt (the Pre-Flight-screened prompt this
         agent was created with — not a parameter, so an unscreened prompt can't be
-        swapped in at run time) + `task` to Claude along with the tool definitions,
+        swapped in at run time) + `task` to Claude along with the definitions of the
+        tools in self.baseline.commands (and no others),
         execute every tool_use block via self._execute_tool_call
         (which routes it through the gateway chokepoint against self.baseline first),
         send the results back as a tool_result message, and repeat until the API's
@@ -261,7 +269,7 @@ class Agent:
                 model=model,
                 max_tokens=max_tokens,
                 system=self.system_prompt,
-                tools=TOOL_DEFINITIONS,
+                tools=self._granted_tool_definitions(),
                 messages=messages,
             )
             messages.append({"role": "assistant", "content": response.content})
