@@ -1,9 +1,9 @@
 """
 run_eval.py — offline calibration harness for the Chokepoint's decision logic.
 
-Runs every case in an eval set through the same three functions
+Runs every case in an eval set through the same functions
 gateway/chokepoint.py's evaluate_request orchestrates for a real request —
-get_classification, compute_similarity, decide_tier — and reports per-case
+check_command, get_classification, compute_similarity, decide_tier — and reports per-case
 correctness, a confusion matrix, and precision/recall, overall and per group.
 
 Two sets (--set):
@@ -51,7 +51,7 @@ EVAL_SETS = {
 }
 
 # triggered_by values produced by rules that never consult the similarity score.
-DETERMINISTIC_TRIGGERS = {"allowlist", "classification"}
+DETERMINISTIC_TRIGGERS = {"commands", "allowlist", "classification"}
 GROUPS = ["deterministic", "semantic"]
 
 TIERS = [Tier.GREEN.value, Tier.YELLOW.value, Tier.RED.value]
@@ -66,14 +66,16 @@ def _layer(triggered_by: str) -> str:
 
 
 def _run_case(entry: dict[str, Any]) -> dict[str, Any]:
-    """Run one eval case through get_classification / compute_similarity /
-    decide_tier directly — the same three functions the Chokepoint orchestrates for a
+    """Run one eval case through check_command / get_classification /
+    compute_similarity / decide_tier directly — the same functions the Chokepoint orchestrates for a
     real request, without evaluate_request's audit-log/kill-switch side effects."""
     baseline = Baseline.create(
         agent_id=f"eval-{entry['id']}",
         dispatcher="eval",
         task=entry["baseline_task"],
-        commands=[],
+        # The case's own tool is granted, so the commands rule never decides a
+        # calibration/held-out case: these sets test the other layers.
+        commands=[entry["tool_name"]],
         allowed_resources=entry["allowed_resources"],
     )
     # Reuse chokepoint's own (private but same-package) resource/description
@@ -84,7 +86,9 @@ def _run_case(entry: dict[str, Any]) -> dict[str, Any]:
 
     classification = get_classification(resource)
     score = compute_similarity(description, baseline)
-    decision = decide_tier(score, classification, resource, baseline)
+    decision = chokepoint.check_command(entry["tool_name"], baseline) or decide_tier(
+        score, classification, resource, baseline
+    )
 
     layer = _layer(decision.triggered_by)
     return {

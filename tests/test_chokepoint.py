@@ -130,3 +130,42 @@ def test_current_intent_absent_from_audit_log_when_not_provided(monkeypatch):
     entry = _last_audit_entry()
     # Absent entirely, not null-padded — most decisions carry no self-reported text.
     assert "current_intent" not in entry
+
+
+def test_tool_not_in_commands_is_red_even_for_allowlisted_resource(monkeypatch):
+    """Baseline.commands is enforced: a tool the agent was not granted is RED,
+    decided by the commands rule, before allowlist/classification/similarity."""
+    baseline = _make_baseline(
+        commands=["read_file"], allowed_resources=["reports/board.md"]
+    )
+    monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "PUBLIC")
+    monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.99)
+    monkeypatch.setattr(chokepoint, "get_hmac_secret", lambda: b"test-secret")
+    store = MagicMock(spec=BaselineStore)
+
+    decision, updated_baseline, _ = evaluate_request(
+        baseline, SIGNATURE, "send_email", {"to": "x@example.com", "body": "hi"}, store
+    )
+
+    assert decision.tier == Tier.RED
+    assert decision.triggered_by == "commands"
+    # Same as every other RED: the agent is frozen and the freeze is persisted.
+    assert updated_baseline.status == "frozen"
+    store.save.assert_called_once()
+    assert _last_audit_entry()["triggered_by"] == "commands"
+
+
+def test_tool_in_commands_is_decided_by_normal_precedence(monkeypatch):
+    baseline = _make_baseline(
+        commands=["read_file", "send_email"], allowed_resources=[]
+    )
+    monkeypatch.setattr(chokepoint, "get_classification", lambda resource: "PUBLIC")
+    monkeypatch.setattr(chokepoint, "compute_similarity", lambda description, baseline: 0.0)
+    store = MagicMock(spec=BaselineStore)
+
+    decision, _, _ = evaluate_request(
+        baseline, SIGNATURE, "send_email", {"to": "x@example.com", "body": "hi"}, store
+    )
+
+    assert decision.tier == Tier.GREEN
+    assert decision.triggered_by == "classification"

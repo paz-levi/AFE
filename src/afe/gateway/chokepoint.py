@@ -54,6 +54,23 @@ def _build_description(tool_name: str, tool_args: dict[str, Any]) -> str:
     return f"{tool_name}({tool_args})"
 
 
+def check_command(tool_name: str, baseline: Baseline) -> Decision | None:
+    """Enforce Baseline.commands: return a RED Decision (triggered_by="commands") if
+    `tool_name` is not one of the tools the agent was dispatched with, else None.
+    Checked before the allowlist/classification/similarity precedence in decide_tier,
+    so an allowlisted resource does not make an ungranted tool acceptable."""
+    if tool_name in baseline.commands:
+        return None
+    return Decision(
+        tier=Tier.RED,
+        reason=(
+            f"Tool {tool_name!r} is not in the agent's granted commands "
+            f"{baseline.commands}."
+        ),
+        triggered_by="commands",
+    )
+
+
 def evaluate_request(
     baseline: Baseline,
     signature: str,
@@ -69,7 +86,8 @@ def evaluate_request(
     every subsequent request is blocked immediately with no further semantic
     checking — get_classification/compute_similarity/decide_tier are not called.
     Otherwise, extracts the resource and a request description from the actual tool
-    call, resolves the resource's classification, computes its semantic similarity
+    call, rejects a tool not in baseline.commands (check_command, RED), resolves the
+    resource's classification, computes its semantic similarity
     against the baseline's task unconditionally (every decision gets a real
     similarity_score in the audit log, even when allowlist or classification
     precedence ends up deciding the tier instead), applies policy precedence via
@@ -106,7 +124,9 @@ def evaluate_request(
     description = _build_description(tool_name, tool_args)
     classification = get_classification(resource)
     score = compute_similarity(description, baseline)
-    decision = decide_tier(score, classification, resource, baseline)
+    decision = check_command(tool_name, baseline) or decide_tier(
+        score, classification, resource, baseline
+    )
 
     audit.log_decision(
         baseline.agent_id, resource, classification, score, decision, current_intent
