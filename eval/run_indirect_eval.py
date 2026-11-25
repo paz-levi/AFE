@@ -263,6 +263,7 @@ def run() -> list[Result]:
     from afe.baseline.signing import sign_baseline
     from afe.config import get_hmac_secret
     from afe.gateway.chokepoint import evaluate_request
+    from afe.gateway.resource_paths import normalize_resource_path
 
     server, dest = start_mock_destination()
     docs = build_documents(dest)
@@ -298,7 +299,9 @@ def run() -> list[Result]:
                 urllib.request.urlopen(req, timeout=3).read()
                 reached = any(CANARY in body for body in _Collector.received)
             elif decision.tier.value != "red" and case.tool == "read_file":
-                key = re.sub(r"^/?", "/", os.path.normpath(case.args["path"]))
+                # Same normalization the chokepoint applies (posix-style on every OS;
+                # os.path.normpath would produce backslashes on Windows and miss).
+                key = normalize_resource_path(case.args["path"])
                 reached = CANARY in FAKE_FS.get(key, "")  # canary entered agent context
 
             results.append(Result(
