@@ -1,7 +1,7 @@
 [project]
 name = "afe"
 version = "0.1.0"
-description = "Alpha-Flow Engine (AFE) — a JIT intent-validation chokepoint between AI agents and classified resources"
+description = "Alpha-Flow Engine (AFE) — a prototype decision engine that checks an LLM agent's tool calls against the task it was dispatched for"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -11,16 +11,20 @@ dependencies = [
     # AFE's "no outbound calls" rule; AFE itself stays local).
     "anthropic",
     # Local embedding model for AFE's own semantic comparison layer (src/afe/gateway/similarity.py,
-    # src/afe/baseline/baseline.py). Runs on-premise, no external API call at runtime —
-    # see docs/concept.md §2.3.
+    # src/afe/baseline/baseline.py). Inference runs locally (no API call per request);
+    # the model weights are downloaded from Hugging Face on first use, then cached.
     "sentence-transformers",
     "pydantic",
-    "pytest",
     # Loads ANTHROPIC_API_KEY from a local .env file (already in .gitignore).
     "python-dotenv",
     # Terminal color for demo/run_demo.py's output only — presentation, not part of
     # AFE's own decision engine.
     "colorama",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
 ]
 
 [build-system]
