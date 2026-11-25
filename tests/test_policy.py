@@ -93,3 +93,13 @@ def test_decide_tier_allowlist_matches_regardless_of_leading_slash():
 
     assert result.tier == Tier.GREEN
     assert result.triggered_by == "allowlist"
+
+
+def test_allowlist_match_is_case_sensitive():
+    """The allowlist is an explicit trust grant: it is not widened to case variants,
+    which on a case-sensitive filesystem are different files. A case variant falls
+    through to classification (here SECRET -> RED), the fail-secure direction."""
+    baseline = _make_baseline(allowed_resources=["finance/payroll.csv"])
+
+    assert decide_tier(0.0, "SECRET", "/finance/payroll.csv", baseline).tier == Tier.GREEN
+    assert decide_tier(0.0, "SECRET", "/Finance/payroll.csv", baseline).tier == Tier.RED

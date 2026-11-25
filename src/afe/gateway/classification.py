@@ -52,20 +52,41 @@ def _is_under_folder(path: str, folder: str) -> bool:
 
 
 def get_classification(path: str) -> str:
-    """Resolve the classification level for `path`: an exact match in file_overrides
+    """Resolve the classification level for `path`: a matching file_overrides entry
     wins first (logging a warning if it's a downward override), then the longest
     matching folder prefix in folders, else the fail-secure default CONFIDENTIAL
     (docs/concept.md §5.2) — never PUBLIC for an unclassified resource. `path` is
     normalized before lookup (see resource_paths.py) so an incoming path missing a
     leading slash, or using backslashes, still matches config/classification.json's
     canonical (already leading-slash) keys instead of silently falling through to
-    the fail-secure default."""
+    the fail-secure default.
+
+    Matching is case-insensitive only where that can make the result stricter:
+    folder rules and upward file overrides match in any casing, so
+    "/Finance/payroll.csv" resolves like "/finance/payroll.csv". A downward
+    override (which loosens a file's level) matches its exact path only: on a
+    case-sensitive filesystem a case variant is a different file, so it falls back
+    to its folder's level instead of inheriting the looser one. The lower-cased
+    form is used for matching only; callers keep the original string (e.g. for
+    the audit log)."""
     path = normalize_resource_path(path)
+    folded = path.lower()
     policy = _load_policy()
 
     file_overrides = policy.get("file_overrides", {})
     if path in file_overrides:
-        override = file_overrides[path]
+        override_key = path
+    else:
+        override_key = next(
+            (
+                key
+                for key, override in file_overrides.items()
+                if not override.get("downward_override") and key.lower() == folded
+            ),
+            None,
+        )
+    if override_key is not None:
+        override = file_overrides[override_key]
         level = override["level"]
         if override.get("downward_override"):
             logger.warning(
@@ -76,7 +97,7 @@ def get_classification(path: str) -> str:
     folders = policy.get("folders", {})
     best_match: tuple[str, str] | None = None
     for folder, level in folders.items():
-        if _is_under_folder(path, folder):
+        if _is_under_folder(folded, folder.lower()):
             if best_match is None or len(folder) > len(best_match[0]):
                 best_match = (folder, level)
     if best_match is not None:

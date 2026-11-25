@@ -106,3 +106,67 @@ def test_path_traversal_resolves_to_true_target_not_bypassed(monkeypatch):
     monkeypatch.setattr(classification, "_POLICY", None)
 
     assert get_classification("reports/../finance/payroll.csv") == "SECRET"
+
+
+# --- case variants (strict-only case folding) ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path, expected",
+    [
+        ("/Finance/payroll.csv", "SECRET"),  # folder rule, any casing
+        ("/FINANCE/Payroll.CSV", "SECRET"),
+        ("/Reports/quarterly.md", "INTERNAL"),
+        ("/REPORTS/Board_Summary.md", "SECRET"),  # upward override, any casing
+    ],
+)
+def test_case_variants_resolve_like_canonical_path(signed_policy, path, expected):
+    assert get_classification(path) == expected
+
+
+def test_downward_override_requires_exact_case(signed_policy):
+    """A downward (PUBLIC) override only loosens the exact path it names: on a
+    case-sensitive filesystem a case variant is a different file, so it falls back
+    to its folder's level instead of inheriting PUBLIC."""
+    assert get_classification("/finance/press_release_draft.md") == "PUBLIC"
+    assert get_classification("/finance/Press_Release_Draft.md") == "SECRET"
+
+
+def test_case_variant_against_real_signed_config(monkeypatch):
+    monkeypatch.setattr(classification, "_POLICY", None)
+
+    assert get_classification("/Finance/payroll.csv") == "SECRET"
+
+
+def test_audit_log_keeps_original_casing(signed_policy, monkeypatch, tmp_path):
+    """Case folding is for matching only: the audit log records the path as requested."""
+    from unittest.mock import MagicMock
+
+    from afe.baseline.baseline import Baseline
+    from afe.gateway import audit, chokepoint, policy
+    from afe.storage.store import BaselineStore
+
+    monkeypatch.setattr(audit, "AUDIT_LOG_PATH", tmp_path / "audit.jsonl")
+    # Plain thresholds, so a mis-resolved (non-SECRET) path fails on the assertion
+    # below rather than on verifying the real thresholds.json with the test secret.
+    monkeypatch.setattr(
+        policy, "_THRESHOLDS",
+        {"INTERNAL": {"yellow": 0.1, "green": 0.3},
+         "CONFIDENTIAL": {"yellow": 0.1, "green": 0.3}},
+    )
+    monkeypatch.setattr(chokepoint, "compute_similarity", lambda d, b: 0.0)
+    baseline = Baseline(
+        agent_id="a", dispatcher="d", task="t", task_embedding=[0.0],
+        commands=["read_file"], allowed_resources=[],
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+
+    decision, _, _ = chokepoint.evaluate_request(
+        baseline, "sig", "read_file", {"path": "/Finance/payroll.csv"},
+        MagicMock(spec=BaselineStore),
+    )
+
+    entry = json.loads((tmp_path / "audit.jsonl").read_text(encoding="utf-8"))
+    assert entry["resource"] == "/Finance/payroll.csv"
+    assert entry["classification"] == "SECRET"
+    assert decision.triggered_by == "classification"
