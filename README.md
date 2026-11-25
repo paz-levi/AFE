@@ -98,7 +98,9 @@ flowchart TD
     A["1. Pre-Flight & Baseline\n(screen prompt, sign & store Baseline)"] --> B["2. Free operation\n(agent runs, reads files/emails/pages)"]
     B --> C["3. JIT Chokepoint\n(every resource request passes through here)"]
 
-    C --> D{Allowlisted\nresource?}
+    C --> T{Tool in Baseline\ncommands?}
+    T -->|no| RED0[["RED — blocked + agent frozen"]]
+    T -->|yes| D{Allowlisted\nresource?}
     D -->|yes| GREEN1[["GREEN — approved"]]
     D -->|no| E{Classification\n= PUBLIC?}
     E -->|yes| GREEN2[["GREEN — approved"]]
@@ -193,14 +195,49 @@ only the similarity score decided. Details, per case and per layer:
 
 ## Known limitations
 
-The most consequential one: **`allowed_resources` is an explicit trust grant that outranks classification and similarity by design** — a mistake made when the allowlist is defined is not caught by any other layer. AFE's threat model also assumes an attacker who can influence the agent's *inputs*, not one with simultaneous direct access to the filesystem and the HMAC signing secret. And semantic checking itself is inherently probabilistic — the deterministic checks (allowlist, classification, fail-secure) are the layer actually doing the hard guarantees. Full list: the full concept document in docs/.
+- **No enforcement layer.** AFE returns a decision; it cannot stop a call that does
+  not go through it. Only the demo harness and the eval scripts call it.
+- **The public development key must never be used in production.** With
+  `AFE_HMAC_SECRET` unset, AFE signs and verifies with `DEV_HMAC_SECRET` from
+  `src/afe/config.py`, which is committed to this repository, so anyone can forge a
+  policy or Baseline signature with it. It exists only so a fresh clone runs. A
+  warning is printed whenever it is used.
+- **`allowed_resources` is an explicit trust grant that outranks classification and
+  similarity by design.** A mistake made when the allowlist is defined is not caught
+  by any other layer.
+- **The semantic layer is probabilistic and weak on unseen wording** (see the held-out
+  results). The hard guarantees come from the deterministic checks: commands,
+  allowlist, PUBLIC/SECRET classification, and the fail-secure CONFIDENTIAL default.
+- **Egress is judged only by similarity once the tool is granted.** When `send_email`
+  is part of the task, an email that sounds like the task is approved whatever its
+  destination or contents (held-out case 45, indirect-injection configuration B).
+- **Tool results are not inspected.** The chokepoint sees the agent's outgoing calls,
+  never the content the agent read, so it cannot tell that a document contained
+  instructions.
+- **Case-insensitive matching only in the strict direction.** Folder rules and upward
+  overrides match in any casing. The allowlist and downward (PUBLIC) overrides match
+  exact case only, so on a case-insensitive filesystem a case variant of an
+  allowlisted file is blocked rather than allowed.
+- **Threat model.** It assumes an attacker who can influence the agent's *inputs*, not
+  one with direct access to the filesystem and the signing secret.
+
+More in [docs/concept.md §11](docs/concept.md#11-known-limitations).
 
 ## Roadmap
 
-- **Real network enforcement** — a reverse proxy in front of real MCP servers, not just internal logic
-- **Policy authority separation** — the signed policy and its signing key move to a physically/logically separate system the AFE host can only read from, never write to
-- **Tamper-evident audit log** — chained signing, so deleting a log line breaks the chain
-- **A local LLM for the agent's brain itself**, and **integration as a hook in real coding-agent tools** (e.g. Claude Code's `PreToolUse`) — closing off the network on the agent side too, and letting AFE's chokepoint logic protect a real deployed agent, not just the demo harness
+- **An enforcement layer:** a proxy in front of real tool/MCP servers, or a hook in a
+  real agent runtime (e.g. Claude Code's `PreToolUse`), so calls cannot bypass AFE
+- **Scanning tool results for hidden instructions:** inspect what the agent reads
+  (hidden comments, encoded payloads, forged-authority text), not only what it does
+  next
+- **Taint tracking after a sensitive read:** once a SECRET or flagged resource has
+  been read in a run, require explicit approval for any later egress call
+- **A per-task destination allowlist for egress tools:** a deterministic list of
+  allowed recipients in the Baseline, same shape as `allowed_resources`
+- **Policy authority separation:** the signed policy and its key live on a system the
+  AFE host can only read from
+- **Tamper-evident audit log:** chained signing, so deleting a line breaks the chain
+- **A local LLM for the agent itself**, closing off the network on the agent side too
 
 ## License
 
