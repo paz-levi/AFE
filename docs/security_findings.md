@@ -4,7 +4,7 @@ Short, dated writeups of security issues found (and fixed) in AFE's own code
 during development. This file will grow if further findings turn up before
 the project ships.
 
-## Path traversal in resource classification (found and fixed during Day 9)
+## Path traversal in resource classification (found and fixed during development)
 
 **Trigger:** while discussing the July 2026 OpenAI/Hugging Face sandbox-escape
 incident (an AI agent exploited a gap between what a permission check validated

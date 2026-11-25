@@ -76,7 +76,7 @@ A representation of text as a vector of numbers (a list of tens/hundreds of numb
 A way to measure how "close" two vectors are — effectively the angle between them in space. A score of 1 = identical in meaning, 0 = completely unrelated. This is the calculation that decides whether a request is "similar enough" to the original task.
 
 **Threshold Calibration**
-The process of setting the numeric threshold (e.g. 0.75) above which something counts as "similar enough." This is **not** a mathematical constant — it's a parameter that needs to be checked empirically against real examples, exactly what you did on day 11 with the evaluation set.
+The process of setting the numeric threshold (e.g. 0.75) above which something counts as "similar enough." This is **not** a mathematical constant — it's a parameter that needs to be checked empirically against real examples, which is what eval/run_eval.py does against the calibration set.
 
 **Precision / Recall**
 Two metrics for measuring classification quality. Precision = out of everything you flagged "red," how many were actually problematic (how many false alarms). Recall = out of all the actually problematic requests, how many did you catch (how many did you miss). There's a trade-off between them — a stricter threshold raises precision and lowers recall.

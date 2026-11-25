@@ -159,7 +159,7 @@ Every decision is recorded as a JSONL line with: `agent_id`, `timestamp`, `resou
 - A dashboard for the yellow-tier human review — logging is enough
 - Integration with real MCP servers
 - Real Redis (the in-memory cache is a deliberate, documented substitute)
-- C++/Java (see rationale in the work plan)
+- C++/Java (Python only: a second language would add a build system and bindings with no benefit to the prototype)
 
 ## 10. Future roadmap
 
@@ -306,4 +306,4 @@ bypass in resource classification, found and fixed).
 Zero Trust · API Gateway / chokepoint · Prompt Injection (direct/indirect) · Agentic AI / Tool Use · HMAC (integrity vs. secrecy) · JWT · Embeddings · Cosine Similarity · Threshold Calibration · Precision/Recall · False Positive/Negative · Tiered Decision Making · Data Classification / Sensitivity Labeling · Fail-secure · Risk-based Access Control · Audit Trail · MITRE ATLAS · OWASP LLM Top 10 · CWE-22 (Path Traversal) · Segregation of Duties · Control-plane / Data-plane separation
 
 ---
-*This document describes the concept and the POC scope. Day-to-day execution detail is in the "Monthly Work Plan" document.*
+*This document describes the concept and the POC scope.*

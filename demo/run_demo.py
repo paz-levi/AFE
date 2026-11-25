@@ -272,8 +272,8 @@ def scenario_4_insider_prompt(store: BaselineStore) -> tuple[str, str]:
     plausible and asks for one thing too many. Same non-determinism caveat as
     scenario 3 — report whichever outcome actually occurs.
 
-    This scenario can legitimately be caught at EITHER layer. docs/work_plan.md's Day 10
-    sketch predicted it would clear Pre-Flight and get stopped at the Chokepoint, but
+    This scenario can legitimately be caught at EITHER layer. The original design
+    predicted it would clear Pre-Flight and get stopped at the Chokepoint, but
     the prompt states its overreach in plain language, so Pre-Flight may well flag it
     first. Both are correct behaviour — that's what defense in depth means — so both
     are reported as real outcomes rather than one being treated as a failure.
@@ -395,8 +395,8 @@ def _read(path: str | Path) -> str:
 # Every fixture file this demo actually opens (via _read() or a real, non-blocked
 # read_file tool call), resolved against REPO_ROOT so the check below works regardless
 # of the process's working directory. tools.py's mock read_file deliberately falls
-# back to placeholder content on a missing file (a Day 2 design choice for the tool
-# itself, not a bug) — fine for the tool in general, but wrong for a demo whose whole
+# back to placeholder content on a missing file (a deliberate design choice for the
+# tool itself, not a bug) — fine for the tool in general, but wrong for a demo whose whole
 # point is showing real content, so this demo checks loudly instead of trusting that
 # fallback to go unnoticed.
 #

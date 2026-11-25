@@ -5,7 +5,7 @@ Defines the Baseline (pydantic model) per the schema in docs/concept.md §4: age
 dispatcher, task, task_embedding, commands, allowed_resources, created_at, and status
 ("active"/"frozen"). task_embedding is produced by AFE's local embedding model
 (sentence-transformers), never an external API. The stored JSON schema also includes a
-signature field, but it is not part of this pydantic model — signing.py (day 5) produces
+signature field, but it is not part of this pydantic model — signing.py produces
 it separately, over the serialized Baseline. Every JIT request at the chokepoint is
 ultimately compared against a stored Baseline.
 """
