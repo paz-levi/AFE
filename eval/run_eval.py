@@ -1,13 +1,22 @@
 """
 run_eval.py — offline calibration harness for the Chokepoint's decision logic.
 
-Runs every case in eval/eval_set.json through the same three functions
+Runs every case in an eval set through the same three functions
 gateway/chokepoint.py's evaluate_request orchestrates for a real request —
 get_classification, compute_similarity, decide_tier — and reports per-case
-correctness, a confusion matrix, and precision/recall. This is the tool
-docs/work_plan.md's Day 11 threshold calibration is actually done with: run it, look
-at where expected vs. actual disagree, adjust config/thresholds.json (via
-scripts/sign_policy.py, the real signed-policy pipeline), and run again.
+correctness, a confusion matrix, and precision/recall, overall and per group.
+
+Two sets (--set):
+  calibration  eval/eval_set.json (20 cases). config/thresholds.json was tuned on
+               this set, so its numbers are calibration results, not validation.
+  heldout      eval/heldout_set.json (26 cases), labels fixed before any run and not
+               used for tuning. Each case carries a "group" label.
+
+Groups: "deterministic" cases are decided by the allowlist / PUBLIC / SECRET rules,
+which never look at the similarity score, so thresholds cannot affect them;
+"semantic" cases reach the threshold comparison. For the held-out set the group comes
+from the case's "group" field; for the calibration set (which has no such field) it
+is derived from which check actually decided the case (triggered_by).
 
 Deliberately does NOT go through evaluate_request or Agent.create: no Baseline is
 signed or persisted, no Pre-Flight screening happens, and no audit.log_decision call
@@ -35,13 +44,25 @@ from afe.gateway.classification import get_classification
 from afe.gateway.policy import Tier, decide_tier
 from afe.gateway.similarity import compute_similarity
 
-EVAL_SET_PATH = Path(__file__).resolve().parent / "eval_set.json"
+EVAL_DIR = Path(__file__).resolve().parent
+EVAL_SETS = {
+    "calibration": EVAL_DIR / "eval_set.json",
+    "heldout": EVAL_DIR / "heldout_set.json",
+}
+
+# triggered_by values produced by rules that never consult the similarity score.
+DETERMINISTIC_TRIGGERS = {"allowlist", "classification"}
+GROUPS = ["deterministic", "semantic"]
 
 TIERS = [Tier.GREEN.value, Tier.YELLOW.value, Tier.RED.value]
 
 
-def _load_eval_set() -> list[dict[str, Any]]:
-    return json.loads(EVAL_SET_PATH.read_text(encoding="utf-8"))
+def _load_eval_set(path: Path) -> list[dict[str, Any]]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _layer(triggered_by: str) -> str:
+    return "deterministic" if triggered_by in DETERMINISTIC_TRIGGERS else "semantic"
 
 
 def _run_case(entry: dict[str, Any]) -> dict[str, Any]:
@@ -65,8 +86,12 @@ def _run_case(entry: dict[str, Any]) -> dict[str, Any]:
     score = compute_similarity(description, baseline)
     decision = decide_tier(score, classification, resource, baseline)
 
+    layer = _layer(decision.triggered_by)
     return {
         "id": entry["id"],
+        # Labeled group if the set has one (held-out), else the layer that decided.
+        "group": entry.get("group", layer),
+        "layer": layer,
         "description": entry["description"],
         "expected_tier": entry["expected_tier"],
         "actual_tier": decision.tier.value,
@@ -80,7 +105,8 @@ def _print_case(result: dict[str, Any]) -> None:
     marker = "CORRECT" if result["correct"] else "WRONG"
     print(
         f"[{result['id']:>2}] {marker:<7} expected={result['expected_tier']:<6} "
-        f"actual={result['actual_tier']:<6} triggered_by={result['triggered_by']:<14} "
+        f"actual={result['actual_tier']:<6} group={result['group']:<13} "
+        f"triggered_by={result['triggered_by']:<14} "
         f"score={result['score']:.3f}  {result['description']}"
     )
 
@@ -121,9 +147,39 @@ def _precision_recall(results: list[dict[str, Any]], is_positive) -> tuple[str, 
     return precision, recall
 
 
+def _print_summary(results: list[dict[str, Any]]) -> None:
+    correct = sum(1 for r in results if r["correct"])
+    accuracy = correct / len(results) if results else 0.0
+    print(f"Accuracy: {correct}/{len(results)} ({accuracy:.1%})")
+
+    _print_confusion_matrix(results)
+
+    n_red = sum(1 for r in results if r["expected_tier"] == "red")
+    red_precision, red_recall = _precision_recall(results, lambda tier: tier == "red")
+    print(f"\nRED as positive class (n expected red = {n_red}):")
+    print(f"  precision={red_precision}  recall={red_recall}")
+
+    n_flagged = sum(1 for r in results if r["expected_tier"] in ("yellow", "red"))
+    flagged_precision, flagged_recall = _precision_recall(
+        results, lambda tier: tier in ("yellow", "red")
+    )
+    print(
+        f"\nFLAGGED (yellow or red) as positive class "
+        f"(n expected flagged = {n_flagged}):"
+    )
+    print(f"  precision={flagged_precision}  recall={flagged_recall}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run eval/eval_set.json through the Chokepoint's decision logic."
+        description="Run an eval set through the Chokepoint's decision logic."
+    )
+    parser.add_argument(
+        "--set",
+        dest="eval_set",
+        choices=sorted(EVAL_SETS),
+        default="calibration",
+        help="Which eval set to run (default: calibration).",
     )
     parser.add_argument(
         "--thresholds",
@@ -149,7 +205,9 @@ def main() -> None:
         print(f"Using threshold override from {override_path} (unsigned, this run only)\n")
 
     try:
-        eval_set = _load_eval_set()
+        eval_set_path = EVAL_SETS[args.eval_set]
+        print(f"Eval set: {args.eval_set} ({eval_set_path.name})\n")
+        eval_set = _load_eval_set(eval_set_path)
         results = [_run_case(entry) for entry in eval_set]
     finally:
         if overrode_thresholds:
@@ -161,21 +219,29 @@ def main() -> None:
     for result in results:
         _print_case(result)
 
-    correct = sum(1 for r in results if r["correct"])
-    accuracy = correct / len(results) if results else 0.0
-    print(f"\nOverall accuracy: {correct}/{len(results)} ({accuracy:.1%})")
+    print("\n=== All cases ===")
+    _print_summary(results)
 
-    _print_confusion_matrix(results)
+    for group in GROUPS:
+        group_results = [r for r in results if r["group"] == group]
+        print(f"\n=== Group: {group} ===")
+        if not group_results:
+            print("(no cases)")
+            continue
+        _print_summary(group_results)
+        misses = [r for r in group_results if not r["correct"]]
+        print(f"\nMisses ({len(misses)}):")
+        for r in misses:
+            _print_case(r)
 
-    red_precision, red_recall = _precision_recall(results, lambda tier: tier == "red")
-    print(f"\nRED as positive class:")
-    print(f"  precision={red_precision}  recall={red_recall}")
-
-    flagged_precision, flagged_recall = _precision_recall(
-        results, lambda tier: tier in ("yellow", "red")
-    )
-    print(f"\nFLAGGED (yellow or red) as positive class — yellow-band safety net:")
-    print(f"  precision={flagged_precision}  recall={flagged_recall}")
+    mislabeled = [r for r in results if r["group"] != r["layer"]]
+    if mislabeled:
+        print(
+            "\nCases whose labeled group differs from the layer that actually "
+            "decided them:"
+        )
+        for r in mislabeled:
+            print(f"  [{r['id']}] labeled={r['group']} decided_by={r['triggered_by']}")
 
 
 if __name__ == "__main__":
