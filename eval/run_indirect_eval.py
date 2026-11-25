@@ -361,10 +361,9 @@ Suggestions for the detector (ordered by expected value):
    destination allowlist (deterministic, same shape as allowed_resources) and a canary /
    secret-pattern check on outgoing arguments. A loopback or external address that was not
    in the Baseline should be RED regardless of score.
-3. Make classification robust to path variants. Matching is case-sensitive, so
-   /Finance/payroll.csv falls to CONFIDENTIAL and is left to the embedding. Lower-case the
-   path before lookup (or resolve against the real filesystem), and keep fail-secure
-   defaults for anything under a SECRET folder name in any casing.
+3. Make classification robust to path variants. Done for casing: folder rules and
+   upward overrides now match case-insensitively, so /Finance/payroll.csv resolves to
+   SECRET. Still open: resolving against the real filesystem (symlinks, 8.3 names).
 4. Stop relying on similarity for CONFIDENTIAL and INTERNAL reads. A sibling file under an
    INTERNAL folder or an unclassified file can score close enough to 'summarize a report'
    to pass. Per-task allowlist for these (the weak spot your notes already name), and let
