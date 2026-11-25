@@ -2,7 +2,9 @@
 
 [![tests](https://github.com/paz-levi/AFE/actions/workflows/tests.yml/badge.svg)](https://github.com/paz-levi/AFE/actions/workflows/tests.yml)
 
-An application-layer (Layer 7) security proxy and runtime guardrail that sits between an AI agent and a sensitive resource, checking not "is there permission?" but "does what the agent is trying to do right now still match what it was dispatched to do?"
+Alpha-Flow Engine (AFE) is a prototype decision engine for an LLM agent's tool calls. For each call it asks not "does the agent have permission?" but "does this call still match the task the agent was dispatched for?", and returns GREEN, YELLOW or RED with a reason and the name of the check that decided.
+
+**It has no enforcement layer.** Nothing forces an agent's tool calls through AFE; the demo harness in this repo calls it before every tool call, and blocks the call itself on RED. A proxy or hook that enforces this on a real agent is on the Roadmap. Everything here runs locally as a research prototype.
 
 ## Demo
 
@@ -43,7 +45,7 @@ Classic security tools check permissions at the network/identity level: does the
 
 ## The Solution
 
-AFE is a mandatory chokepoint between the agent and every classified resource, validating **Just-In-Time** — not only at creation — whether the current request still matches the task the agent was signed for. It's agnostic to where a deviation comes from: a poisoned document and a rogue employee both reduce to the same signature (drift from the signed task), so the same mechanism catches both without needing to know which one it's looking at.
+AFE is designed to be a chokepoint between the agent and every classified resource (in this prototype, only the demo harness routes calls through it), validating **Just-In-Time** — not only at creation — whether the current request still matches the task the agent was signed for. It's agnostic to where a deviation comes from: a poisoned document and a rogue employee both reduce to the same signature (drift from the signed task), so the same mechanism catches both without needing to know which one it's looking at.
 
 ```mermaid
 flowchart TD

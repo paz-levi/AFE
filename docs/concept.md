@@ -4,7 +4,7 @@
 
 ## One-line idea
 
-An application-layer (Layer 7) security gate that sits between an AI agent and a sensitive resource, and checks not "is there permission" — but "does what the agent is trying to do right now still match what it was sent to do."
+A decision engine meant to sit between an AI agent and a sensitive resource, and check not "is there permission" — but "does what the agent is trying to do right now still match what it was sent to do."
 
 ## 1. The Problem
 
@@ -15,7 +15,7 @@ Classic security tools check permissions at the network/identity level: does the
 
 ## 2. The Solution: JIT Intent Validation
 
-AFE is a mandatory chokepoint between the agent and every classified resource, that checks one thing: **is the current request still consistent with the task the agent was defined for when it was created?** Validation happens Just-In-Time, not only at creation time.
+AFE is designed as a mandatory chokepoint between the agent and every classified resource (the prototype has no enforcement layer yet; see §9), that checks one thing: **is the current request still consistent with the task the agent was defined for when it was created?** Validation happens Just-In-Time, not only at creation time.
 
 ### 2.1 Core principle: agnostic to the threat's source
 
@@ -24,7 +24,7 @@ AFE doesn't try to identify who the attacker is or where the deviation came from
 This isn't a phrasing convenience but a result of the architecture: because the comparison is between the **actual action** and the **signed task**, the two attack vectors converge to the same signature — deviation from the task. From this follow two implications:
 
 - No need for a signature database or a model of "what an attacker looks like" — unlike signature-based or anomaly-based detection.
-- Attack techniques not yet invented are caught by the same mechanism, as long as they produce a deviation from the task.
+- Attack techniques not yet invented are in scope for the same mechanism, as long as they produce a deviation from the task that the comparison can measure. Whether it actually catches them depends on the similarity scores, which are probabilistic.
 
 **Important caveat:** the source doesn't matter for **enforcement**, but is critical for **response**. After a block, the organization needs to know whether it's a poisoned document (clean it up) or an employee (internal investigation). That's why the Baseline stores `dispatcher` and every decision is recorded in the audit trail — the chain of attribution is preserved for the post-incident investigation.
 
